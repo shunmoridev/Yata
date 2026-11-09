@@ -1,0 +1,51 @@
+[project]
+name = "yata"
+version = "0.2.0"
+description = "Local live-stream captions and topic summaries"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.136",
+  "uvicorn>=0.51",
+  "websockets>=16",
+  "numpy>=2.5",
+  "av>=18",
+  "faster-whisper>=1.2.1",
+]
+
+[project.optional-dependencies]
+# Qwen3-ASR runs through native transformers support (5.13+). Kept optional so a
+# light install can use faster-whisper alone.
+qwen = [
+  "torch>=2.14",
+  "transformers>=5.13",
+]
+speakers = [
+  "sherpa-onnx>=2.0.1",
+]
+# cuBLAS stays below 12.9.3: 12.9.3.13 has no Windows wheel (12.9.2.10 does, as the portable GPU build uses).
+cuda = [
+  "nvidia-cublas-cu12>=12.9,<12.9.3 ; sys_platform == 'win32' or sys_platform == 'linux'",
+  "nvidia-cudnn-cu12>=9.10,<10 ; sys_platform == 'linux'",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=9",
+  "httpx>=0.28",
+]
+bench = [
+  "pyarrow>=20",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu130" }
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true

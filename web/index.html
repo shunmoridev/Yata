@@ -1,0 +1,306 @@
+<!doctype html>
+<!-- The server fills in data-features and data-locale before sending the page. The Japanese here is the ja
+     catalog's and shows before i18n.js runs. -->
+<html lang="ja" data-theme="soft" data-features="" data-locale="">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Yata</title>
+  <!-- How the launcher (python -m yata) tells that a running server on the port is Yata. -->
+  <meta name="application-name" content="Yata">
+  <link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="48x48" href="/assets/favicon-48.png">
+  <link rel="stylesheet" href="/assets/style.css">
+  <!-- Not deferred: applies the colour theme before the first paint. -->
+  <script src="/assets/theme.js"></script>
+  <!-- First of the deferred scripts: the others read their text from it. -->
+  <script src="/assets/i18n.js" defer></script>
+  <script src="/assets/gaps.js" defer></script>
+  <script src="/assets/audio-diagnostics.js" defer></script>
+  <script src="/assets/capture.js" defer></script>
+  <script src="/assets/captions.js" defer></script>
+  <script src="/assets/topics.js" defer></script>
+  <script src="/assets/waveform.js" defer></script>
+  <script src="/assets/hud.js" defer></script>
+  <script src="/assets/sessions.js" defer></script>
+  <script src="/assets/prepare.js" defer></script>
+  <script src="/assets/app.js" defer></script>
+</head>
+<body class="mode-idle">
+  <svg class="sprite" aria-hidden="true" focusable="false">
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="1.5" fill="currentColor"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+    <symbol id="i-pip" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="12" y="11" width="7" height="6" rx="1" fill="currentColor"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-tab" viewBox="0 0 24 24"><path d="M3 8h18v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM3 8V6a2 2 0 0 1 2-2h5l2 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M8 14.5h1.5l1.5-3 2 6 1.5-3H16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-wave" viewBox="0 0 24 24"><path d="M3 12h2M7 8v8M11 5v14M15 9v6M19 11v2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-sigma" viewBox="0 0 24 24"><path d="M17 5H7l6 7-6 7h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-translate" viewBox="0 0 24 24"><path d="M3 5h9M7.5 3v2M5 5c.8 3.4 3 6 6 7.5M10 5c-.8 3.4-3 6-6 7.5M13 21l4-9 4 9M14.6 18h4.8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-chip" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M10 3v3M14 3v3M10 18v3M14 18v3M3 10h3M3 14h3M18 10h3M18 14h3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="M21 3L10 14M21 3l-7 18-4-7-7-4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
+    <symbol id="i-terminal" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M7 9l3 3-3 3M12 15h5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="1.9"/><path d="M16 16l4.5 4.5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></symbol>
+    <symbol id="i-quote" viewBox="0 0 24 24"><path d="M6 17c-1.5-1-2-2.6-2-4.5C4 9 6 7 9 6.5V9c-1.6.4-2.4 1.4-2.4 3H9v5zm9 0c-1.5-1-2-2.6-2-4.5 0-3.5 2-5.5 5-6V9c-1.6.4-2.4 1.4-2.4 3H18v5z" fill="currentColor"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3l10 18H2z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M12 10v5M12 18h.01" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="i-brain" viewBox="0 0 24 24"><path d="M9 4a3 3 0 0 0-3 3 3 3 0 0 0-2 5 3 3 0 0 0 2 5 3 3 0 0 0 6 1V5a3 3 0 0 0-3-1zm6 0a3 3 0 0 1 3 3 3 3 0 0 1 2 5 3 3 0 0 1-2 5 3 3 0 0 1-6 1" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M5 20c.8-3.6 3.6-5.5 7-5.5s6.2 1.9 7 5.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="i-flag" viewBox="0 0 24 24"><path d="M5 21V4M5 4h11l-2 4 2 4H5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/></symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 3.5h4M6.5 7l1 12.5a1.5 1.5 0 0 0 1.5 1.5h6a1.5 1.5 0 0 0 1.5-1.5l1-12.5M10 11v6M14 11v6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M5.6 18.4l1.8-1.8M16.6 7.4l1.8-1.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 7.5V12l3 2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6zM14 3v4h4M9 12h6M9 16h6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7.5 10.5L12 15l4.5-4.5M5 19h14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  </svg>
+
+  <div class="backdrop" aria-hidden="true"></div>
+
+  <div class="app">
+    <aside class="sidebar" id="sidebar" aria-label="セッション" data-i18n-attr="aria-label:nav.sessions">
+      <div class="side-head">
+        <div class="brand">
+          <img src="/assets/logo-36.png" srcset="/assets/logo-36.png 1x, /assets/logo-72.png 2x, /assets/logo-108.png 3x"
+            width="36" height="36" alt="" class="brand-mark">
+          <div class="brand-word">Yata<span>//</span><small>LIVE OPS</small></div>
+        </div>
+        <button class="icon-button side-close" id="close-sidebar" aria-label="一覧を閉じる" data-i18n-attr="aria-label:nav.closeList"><svg><use href="#i-x"/></svg></button>
+      </div>
+      <button class="new-session" id="new-session"><svg><use href="#i-plus"/></svg><span data-i18n="nav.newSession">新しいセッション</span></button>
+      <div class="side-section">
+        <div class="side-label"><span data-i18n="nav.sessions">セッション</span><b class="count" id="session-total">0</b></div>
+        <label class="search side-search"><svg><use href="#i-search"/></svg><input id="session-search" type="search" placeholder="名前で絞り込み" aria-label="セッションを名前で絞り込み"
+          data-i18n-attr="placeholder:nav.filterPlaceholder;aria-label:nav.filterLabel"></label>
+      </div>
+      <nav class="session-list" id="session-list" aria-label="セッション一覧" data-i18n-attr="aria-label:nav.list"></nav>
+      <footer class="side-foot">
+        <button class="prepare-link" id="open-prepare" data-attention="false"><svg><use href="#i-download"/></svg><span data-i18n="prepare.title">この PC の準備</span><i class="prepare-dot" aria-hidden="true"></i></button>
+        <button class="prepare-link" id="open-settings"><svg><use href="#i-gear"/></svg><span data-i18n="settings.title">設定</span></button>
+        <div class="systems" aria-label="システム状態" data-i18n-attr="aria-label:sys.label">
+          <span class="sys" id="sys-llm" data-state="wait" data-tip="LLM" aria-label="LLM"><svg><use href="#i-brain"/></svg></span>
+          <span class="sys" id="sys-asr" data-state="wait" data-tip="ASR" aria-label="ASR"><svg><use href="#i-wave"/></svg></span>
+          <span class="sys" id="sys-spk" data-state="off" data-tip="話者ラベル" aria-label="話者ラベル" data-i18n-attr="data-tip:sys.speakers;aria-label:sys.speakers"><svg><use href="#i-user"/></svg></span>
+          <span class="sys" id="sys-slack" data-state="off" data-tip="Slack" aria-label="Slack"><svg><use href="#i-send"/></svg></span>
+          <button class="sys sys-button" id="toggle-diagnostics" data-tip="診断" aria-label="診断を表示" aria-expanded="false" aria-controls="audio-diagnostics"
+            data-i18n-attr="data-tip:sys.diagnostics;aria-label:sys.showDiagnostics"><svg><use href="#i-terminal"/></svg><b class="sys-count" id="gap-count" hidden>0</b></button>
+        </div>
+        <div class="theme-switch" id="theme-switch" role="group" aria-label="カラーテーマ" data-i18n-attr="aria-label:theme.label" hidden>
+          <button id="theme-soft" data-theme-choice="soft" aria-pressed="true" data-i18n="theme.soft">ソフト</button>
+          <button id="theme-hud" data-theme-choice="hud" aria-pressed="false">HUD</button>
+        </div>
+      </footer>
+    </aside>
+    <div class="scrim" id="sidebar-scrim" aria-hidden="true"></div>
+
+    <div class="workspace">
+      <header class="session-bar">
+        <button class="icon-button menu-button" id="toggle-sidebar" aria-label="セッション一覧" aria-expanded="false" aria-controls="sidebar"
+          data-i18n-attr="aria-label:nav.list"><svg><use href="#i-menu"/></svg></button>
+        <span class="live-badge" id="session-status" data-state="idle">STANDBY</span>
+        <div class="session-name">
+          <strong class="session-heading" id="active-title" data-i18n="nav.newSession">新しいセッション</strong>
+          <small class="session-sub" id="active-meta"></small>
+        </div>
+        <a class="mission-link" id="active-source" target="_blank" rel="noreferrer" hidden aria-label="配信を開く" data-tip="配信を開く"
+          data-i18n-attr="aria-label:bar.openStream;data-tip:bar.openStream"><svg><use href="#i-link"/></svg></a>
+        <time class="mission-clock" id="mission-clock">00:00:00</time>
+        <div class="session-actions">
+          <button class="action" id="start-share"><svg><use href="#i-tab"/></svg><span data-i18n="bar.share">タブを共有</span></button>
+          <button class="action primary" id="resume-session"><svg><use href="#i-play"/></svg><span data-i18n="bar.resume">続きを取り込む</span></button>
+          <button class="action danger" id="stop-session"><svg><use href="#i-stop"/></svg><span data-i18n="bar.stop">終了して要約</span></button>
+          <button class="icon-button" id="cancel-session" aria-label="キャンセル（最終要約なし）" data-tip="キャンセル（最終要約なし）"
+            data-i18n-attr="aria-label:bar.cancel;data-tip:bar.cancel"><svg><use href="#i-x"/></svg></button>
+          <button class="icon-button" id="export-session" aria-label="Markdown で書き出す" data-tip="Markdown で書き出す（文字起こし・要約・メモ）"
+            data-i18n-attr="aria-label:bar.export;data-tip:bar.exportTip"><svg><use href="#i-file"/></svg></button>
+        </div>
+      </header>
+
+      <main class="views">
+        <section class="setup" id="setup-view" aria-labelledby="setup-title">
+          <div class="setup-card">
+            <header class="setup-head">
+              <h1 id="setup-title" data-i18n="setup.title">取り込みを始める</h1>
+              <p data-i18n="setup.lead">共有した音声をこの PC だけで文字起こしし、話題ごとに要約します。セッションは自動で保存され、名前は内容から付きます。</p>
+            </header>
+            <div class="setup-block">
+              <div class="setup-label" data-i18n="setup.source">取り込み元</div>
+              <div class="source-options" id="source-options" role="radiogroup" aria-label="取り込み元" data-i18n-attr="aria-label:setup.source"></div>
+              <div class="fields source-fields">
+                <label class="field field-wide" id="slot-title" hidden><span data-i18n="setup.streamName">配信名</span><input id="source-title" type="text" maxlength="300"></label>
+                <label class="field field-wide" id="slot-url" hidden><span data-i18n="setup.streamUrl">配信 URL</span><input id="source-url" type="url" autocomplete="off"></label>
+              </div>
+            </div>
+            <div class="setup-block">
+              <div class="setup-label" data-i18n="setup.settings">設定</div>
+              <div class="fields">
+                <label class="field"><span><svg><use href="#i-wave"/></svg><span data-i18n="setup.streamLanguage">配信の言語</span></span><select id="asr-language" class="language-select" data-include-auto="true"></select></label>
+                <label class="field"><span><svg><use href="#i-sigma"/></svg><span data-i18n="setup.summaryLanguage">要約の言語</span></span><select id="output-language" class="language-select"></select></label>
+                <label class="field"><span><svg><use href="#i-translate"/></svg><span data-i18n="setup.captionTranslation">字幕の翻訳</span></span><select id="caption-language" class="language-select" data-include-none="true"></select></label>
+                <label class="field"><span><svg><use href="#i-chip"/></svg><span data-i18n="setup.summaryModel">要約（ローカル LLM）</span></span><select id="model-select" disabled><option value="">…</option></select></label>
+                <p class="setup-note field-wide" id="summary-note" data-i18n="setup.note.captions" hidden>字幕と文字起こしだけを記録します。話題の区切り・要約・全体のまとめは作らず、要約の LLM を使いません。字幕の翻訳を選ぶと、翻訳専用のモデル（PLaMo）で訳します（「この PC の準備」で準備が必要です）。</p>
+                <label class="field toggle field-wide" id="slack-slot"><span><svg><use href="#i-send"/></svg><span data-i18n="setup.slack">検証済みの話題要約を Slack に送る</span></span><input type="checkbox" id="slack-delivery" disabled><i class="switch" aria-hidden="true"></i></label>
+              </div>
+            </div>
+            <div class="setup-launch">
+              <button class="launch" id="launch" disabled aria-describedby="launch-hint">
+                <span class="launch-ring" aria-hidden="true"></span>
+                <span class="launch-ring r2" aria-hidden="true"></span>
+                <svg aria-hidden="true"><use href="#i-play"/></svg>
+                <span class="sr-only" id="launch-label" data-i18n="source.share.launch">タブの音声を共有して開始</span>
+              </button>
+              <div class="launch-text">
+                <strong id="launch-title" data-i18n="source.share.launch">タブの音声を共有して開始</strong>
+                <small id="launch-hint" data-i18n="setup.launchHint">Chrome の共有画面で配信のタブを選び、「タブの音声も共有する」をオンにしてください。タブはそのまま再生できます。</small>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="prepare" id="prepare-view" aria-labelledby="prepare-title">
+          <div class="setup-card prepare-card">
+            <header class="setup-head">
+              <h1 id="prepare-title" data-i18n="prepare.title">この PC の準備</h1>
+              <p data-i18n="prepare.lead">使い方を選ぶと、この PC に合うモデルと、その容量・保存先・配布元を示します。取得はボタンを押したときだけ行い、すでにあるファイルは上書きしません。取得したモデルは読み込んで試してから「準備完了」にします。</p>
+            </header>
+            <div class="machine" id="prepare-machine" aria-label="この PC" data-i18n-attr="aria-label:prepare.machine"></div>
+            <div class="setup-block">
+              <div class="setup-label" data-i18n="prepare.plan">使い方</div>
+              <div class="source-options" id="plan-options" role="radiogroup" aria-label="使い方" data-i18n-attr="aria-label:prepare.plan"></div>
+              <label class="field toggle field-wide"><span><svg><use href="#i-user"/></svg><span data-i18n="prepare.speakers">話者ラベル（S1・S2 など）も使う</span></span><input type="checkbox" id="plan-speakers"><i class="switch" aria-hidden="true"></i></label>
+              <p class="setup-note" id="plan-advice"></p>
+            </div>
+            <div class="setup-block">
+              <div class="setup-label" data-i18n="prepare.storage">モデルの保存先</div>
+              <div class="storage">
+                <input id="storage-path" type="text" spellcheck="false" autocomplete="off" aria-label="モデルの保存先" data-i18n-attr="aria-label:prepare.storage">
+                <button class="action" id="storage-save" data-i18n="prepare.storageSave">変更</button>
+                <button class="action" id="storage-reset" data-i18n="prepare.storageReset">既定に戻す</button>
+              </div>
+              <small class="storage-note" id="storage-note"></small>
+            </div>
+            <div class="setup-block">
+              <div class="setup-label" data-i18n="prepare.needs">必要なもの</div>
+              <div class="requirements" id="prepare-list"></div>
+            </div>
+            <footer class="prepare-foot">
+              <p id="prepare-summary"></p>
+              <button class="action primary" id="prepare-done"><svg><use href="#i-play"/></svg><span data-i18n="setup.title">取り込みを始める</span></button>
+            </footer>
+          </div>
+        </section>
+
+        <section class="prepare settings" id="settings-view" aria-labelledby="settings-title">
+          <div class="setup-card prepare-card">
+            <header class="setup-head">
+              <h1 id="settings-title" data-i18n="settings.title">設定</h1>
+              <p data-i18n="settings.lead">画面の言語を選びます。使い方・字幕のモデル・要約と翻訳の LLM は「この PC の準備」で選びます。</p>
+            </header>
+            <div class="setup-block">
+              <div class="setup-label" data-i18n="settings.language">表示言語</div>
+              <div class="fields">
+                <label class="field field-wide"><span><svg><use href="#i-translate"/></svg><span data-i18n="settings.languageLabel">画面の言語</span></span><select id="ui-language"></select></label>
+                <p class="setup-note field-wide" data-i18n="settings.languageNote">画面・メッセージ・書き出しの見出しの言語です。配信・要約・字幕の翻訳の言語は、セッションごとに選びます。</p>
+              </div>
+            </div>
+            <footer class="prepare-foot">
+              <p></p>
+              <button class="action" id="settings-done"><svg><use href="#i-x"/></svg><span data-i18n="settings.close">閉じる</span></button>
+            </footer>
+          </div>
+        </section>
+
+        <section class="session-grid" id="session-view" aria-label="セッション" data-i18n-attr="aria-label:nav.sessions">
+          <div class="column column-main">
+            <section class="panel signal" aria-labelledby="signal-title">
+              <div class="panel-head"><span class="panel-code">01</span><h2 id="signal-title"><span class="en">SIGNAL</span><span class="ja" data-i18n="panel.signal">音声</span></h2>
+                <div class="deck-readout">
+                  <span class="readout stat" id="gauge-asr" data-tone="off" data-tip="ASR 処理時間（ms）" data-i18n-attr="data-tip:gauge.asr"><em>ASR</em><b>--</b><i></i></span>
+                  <span class="readout stat" id="gauge-queue" data-tone="ok" data-tip="認識待ちの発話" data-i18n-attr="data-tip:gauge.queue"><em>QUEUE</em><b>0</b><i></i></span>
+                  <span class="readout stat" id="gauge-llm" data-tone="off" data-tip="LLM"><em>LLM</em><b>IDLE</b></span>
+                  <span class="readout stat" id="gauge-link" data-tone="off" data-tip="接続" data-i18n-attr="data-tip:gauge.link"><em>LINK</em><b>OFF</b></span>
+                  <i class="readout-sep" aria-hidden="true"></i>
+                  <span class="readout" id="readout-lang" data-tip="配信の言語" data-i18n-attr="data-tip:setup.streamLanguage">AUTO</span>
+                  <span class="readout" id="readout-rate" data-tip="サンプリングレート" data-i18n-attr="data-tip:gauge.rate">-- kHz</span>
+                  <span class="meter" id="input-meter" data-tip="入力レベル" data-i18n-attr="data-tip:gauge.level"><i></i></span>
+                </div>
+              </div>
+              <div class="scope" id="scope">
+                <canvas id="waveform" aria-label="音声波形" role="img" data-i18n-attr="aria-label:scope.waveform"></canvas>
+                <div class="scope-grid" aria-hidden="true"></div>
+                <p class="scope-note note-ended" data-i18n="scope.ended">停止中。「続きを取り込む」で、この続きから記録します。</p>
+                <p class="scope-note note-share" data-i18n="scope.shareStopped">タブの共有が止まっています。「タブを共有」で再開できます。</p>
+              </div>
+              <div class="session-map" id="session-map" aria-label="タイムライン" data-i18n-attr="aria-label:scope.timeline"></div>
+            </section>
+
+            <section class="panel stage" id="caption-stage" aria-live="polite" aria-label="字幕" data-i18n-attr="aria-label:captions.label">
+              <div class="stage-bar">
+                <span class="speaker-chip" id="live-speaker" hidden></span>
+                <span class="stage-state" id="stage-state" aria-hidden="true"><i></i><i></i><i></i></span>
+                <button class="icon-button" id="open-pip" aria-label="字幕を小窓で表示" data-tip="字幕を小窓で表示" data-i18n-attr="aria-label:captions.pip;data-tip:captions.pip"><svg><use href="#i-pip"/></svg></button>
+              </div>
+              <div class="caption-lines" id="caption-lines"></div>
+            </section>
+
+            <section class="panel feed" aria-labelledby="feed-title">
+              <div class="panel-head"><span class="panel-code">03</span><h2 id="feed-title"><span class="en">FEED</span><span class="ja" data-i18n="panel.feed">文字起こし</span></h2><b class="count" id="segment-count">0</b>
+                <div class="feed-tools">
+                  <div class="speaker-filter" id="speaker-filter" role="group" aria-label="話者で絞り込み" data-i18n-attr="aria-label:feed.speakerFilter"></div>
+                  <button class="icon-button" id="feed-translate" aria-pressed="false" aria-label="訳を表示" data-tip="訳を表示" data-i18n-attr="aria-label:feed.translate;data-tip:feed.translate" hidden><svg><use href="#i-translate"/></svg></button>
+                  <label class="search" data-tip="検索" data-i18n-attr="data-tip:feed.search"><svg><use href="#i-search"/></svg><input id="feed-search" type="search" aria-label="文字起こしを検索" data-i18n-attr="aria-label:feed.searchLabel"></label>
+                </div>
+              </div>
+              <div class="transcript" id="transcript-list"></div>
+            </section>
+          </div>
+
+          <div class="column-resizer" id="column-resizer" role="separator" aria-orientation="vertical" aria-controls="column-side"
+            aria-label="話題の幅" tabindex="0" data-tip="ドラッグで話題の幅を変える（ダブルクリックで元に戻す）"
+            data-i18n-attr="aria-label:layout.resizer;data-tip:layout.resizerTip"></div>
+
+          <div class="column column-side" id="column-side">
+            <section class="panel memo" aria-labelledby="memo-title">
+              <div class="panel-head"><span class="panel-code">05</span><h2 id="memo-title"><span class="en">NOTES</span><span class="ja" data-i18n="panel.memo">メモ</span></h2>
+                <small class="memo-state" id="memo-state" aria-live="polite"></small>
+                <button class="icon-button" id="memo-time" aria-label="今の時刻を入れる" data-tip="今の時刻を入れる" data-i18n-attr="aria-label:memo.time;data-tip:memo.time"><svg><use href="#i-clock"/></svg></button>
+              </div>
+              <textarea id="memo-text" rows="3" maxlength="20000" spellcheck="false" aria-label="メモ"
+                placeholder="気づいたこと、あとで調べたいことなど。自動で保存され、書き出しにも入ります。"
+                data-i18n-attr="aria-label:panel.memo;placeholder:memo.placeholder"></textarea>
+            </section>
+
+            <section class="panel intel" id="intel" aria-labelledby="topics-title">
+              <div class="panel-head"><span class="panel-code">02</span><h2 id="topics-title"><span class="en">TOPICS</span><span class="ja" data-i18n="panel.topics">話題</span></h2><b class="count" id="topic-count">0</b>
+                <button class="icon-button" id="summarize-now" aria-label="今すぐ整理" data-tip="今すぐ整理" data-i18n-attr="aria-label:topics.refresh;data-tip:topics.refresh"><svg><use href="#i-refresh"/></svg></button>
+              </div>
+              <div class="intel-scroll">
+                <article class="digest" id="digest" hidden></article>
+                <div class="topics" id="topics-list"></div>
+              </div>
+            </section>
+
+            <section class="panel radar" aria-labelledby="speakers-title">
+              <div class="panel-head"><span class="panel-code">04</span><h2 id="speakers-title"><span class="en">SPEAKERS</span><span class="ja" data-i18n="panel.speakers">話者</span></h2></div>
+              <div class="radar-view" id="speaker-radar"></div>
+            </section>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <aside class="drawer" id="audio-diagnostics" hidden aria-label="診断" data-i18n-attr="aria-label:sys.diagnostics">
+    <div class="panel-head"><span class="panel-code">SYS</span><h2><span class="en">DIAGNOSTICS</span><span class="ja" data-i18n="sys.diagnostics">診断</span></h2></div>
+    <p id="audio-diagnostics-body"></p>
+    <div id="gap-list" class="gap-list"></div>
+  </aside>
+
+  <div class="toasts" id="session-message" role="status" aria-live="polite"></div>
+</body>
+</html>

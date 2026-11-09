@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+node_modules/
+
+# ASR benchmark audio, references and results stay local (licenses vary per source).
+bench/
+
+# Local launcher config for the desktop app preview.
+.claude/
+
+# Portable builds (tools/build_portable.py) and their download cache.
+dist/
