@@ -465,9 +465,11 @@ class SessionManager:
             session.emit("session_notes", {"chars": len(notes)})
 
     def set_project(self, session: Session, project_id: Any) -> None:
-        if project_id is not None and (not isinstance(project_id, str) or not self.projects.exists(project_id)):
-            raise SessionError(t("プロジェクトが見つかりません。", "Project not found."))
-        self._file(session, project_id)
+        # Serialize project existence validation and assignment against deletion.
+        with self._lock:
+            if project_id is not None and (not isinstance(project_id, str) or not self.projects.exists(project_id)):
+                raise SessionError(t("プロジェクトが見つかりません。", "Project not found."))
+            self._file(session, project_id)
 
     def _file(self, session: Session, project_id: str | None) -> None:
         with session.lock:
@@ -494,12 +496,13 @@ class SessionManager:
             raise SessionError(str(exc)) from exc
 
     def delete_project(self, project_id: str) -> None:
-        try:
-            self.projects.delete(project_id)
-        except ProjectError as exc:
-            raise SessionError(str(exc)) from exc
-        # Every session filed there is unfiled and saved now, loaded or not, so no API answers with the deleted id.
+        # This lock also guards set_project, so cleanup cannot race with a new assignment.
         with self._lock:
+            try:
+                self.projects.delete(project_id)
+            except ProjectError as exc:
+                raise SessionError(str(exc)) from exc
+            # Every session filed there is unfiled and saved now, loaded or not.
             loaded = {session.id: session for session in self.store.sessions()}
             for session in loaded.values():
                 if session.project_id == project_id:
