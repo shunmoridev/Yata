@@ -1,0 +1,99 @@
+<!doctype html>
+<!--
+  Caption stage benchmark. Serve the repository root over HTTP and open /tools/caption_bench.html in Chrome, e.g.
+    python -m http.server 8772 --bind 127.0.0.1
+  ?script=<path> loads another copy of captions.js to compare versions.
+  It renders a board of 1,000 / 5,000 / 10,000 final lines into a stage sized like the app's, then times the updates
+  a live session makes: a partial line growing word by word, and new finals arriving. Each timing includes the
+  layout the update forces (the stage reads its scroll height to follow the newest line).
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Caption benchmark</title>
+  <link rel="stylesheet" href="../web/assets/style.css">
+  <style>
+    body { padding: 16px; }
+    .stage { width: min(900px, 100%); }
+    pre { font: 12px/1.5 ui-monospace, monospace; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <section class="panel stage" id="caption-stage"></section>
+  <pre id="out">running…</pre>
+  <script>
+    "use strict";
+    const SIZES = [1000, 5000, 10000];
+    const PARTIALS = 200;
+    const FINALS = 50;
+    const stage = document.getElementById("caption-stage");
+    let box = null;
+    const out = document.getElementById("out");
+    const words = "the new camera doubles the sensor resolution and ships next month at a price to be announced".split(" ");
+    const sentence = (i) => words.slice(i % 5, (i % 5) + 9).join(" ") + " (" + i + ")";
+    const stats = (samples) => {
+      const sorted = [...samples].sort((a, b) => a - b);
+      const at = (q) => sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))];
+      return { median: +at(0.5).toFixed(3), p95: +at(0.95).toFixed(3), max: +sorted.at(-1).toFixed(3) };
+    };
+    const frame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()));
+
+    async function run(size) {
+      const { CaptionBoard, render } = YataCaptions;
+      const board = new CaptionBoard();
+      for (let i = 0; i < size; i++) board.addFinal({ segment_id: "e" + i, text: sentence(i), speaker: "S" + (i % 2 + 1), capture_start_ms: i * 4000 });
+      // A fresh stage for each size, as when a session is opened.
+      box = document.createElement("div");
+      box.className = "caption-lines";
+      stage.replaceChildren(box);
+      let started = performance.now();
+      render(box, board.lines(), false, { windowed: true });
+      void box.scrollHeight;
+      const initial = performance.now() - started;
+      await frame();
+      const partial = [];
+      for (let i = 0; i < PARTIALS; i++) {
+        board.setPartial({ utterance_id: "u" + size, text: words.slice(0, (i % words.length) + 1).join(" "), speaker: "S1" });
+        started = performance.now();
+        render(box, board.lines(), false, { windowed: true });
+        void box.scrollHeight;
+        partial.push(performance.now() - started);
+        if (i % 20 === 0) await frame();
+      }
+      const finals = [];
+      for (let i = 0; i < FINALS; i++) {
+        const n = size + i;
+        board.addFinal({ segment_id: "e" + n, utterance_id: "u" + n, text: sentence(n), speaker: "S2", capture_start_ms: n * 4000 });
+        started = performance.now();
+        render(box, board.lines(), false, { windowed: true });
+        void box.scrollHeight;
+        finals.push(performance.now() - started);
+        if (i % 10 === 0) await frame();
+      }
+      return { lines: size, initial_ms: +initial.toFixed(1), partial_ms: stats(partial), final_ms: stats(finals), dom_nodes: box.getElementsByTagName("*").length };
+    }
+
+    // ?script=<path> benchmarks another copy of captions.js (e.g. an older version) under the same conditions.
+    const load = (src) => new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      // A fresh copy each run, never one the browser cached from an earlier version.
+      script.src = src + (src.includes("?") ? "&" : "?") + "v=" + Date.now();
+      script.onload = resolve;
+      script.onerror = reject;
+      document.head.append(script);
+    });
+
+    (async () => {
+      await load(new URLSearchParams(location.search).get("script") || "../web/assets/captions.js");
+      const results = [];
+      for (const size of SIZES) {
+        results.push(await run(size));
+        out.textContent = JSON.stringify(results, null, 2);
+      }
+      window.benchResults = results;
+      out.textContent = JSON.stringify(results, null, 2);
+    })();
+  </script>
+</body>
+</html>

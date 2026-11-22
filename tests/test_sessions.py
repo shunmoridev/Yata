@@ -257,6 +257,41 @@ class ArchiveTests(unittest.TestCase):
         (self.root / "sessions" / f"{session.id}.json").write_text(json.dumps(saved), encoding="utf-8")
         self.assertIsNone(self.manager().get(session.id).project_id)
 
+    def test_deleting_a_project_unfiles_its_sessions_on_disk_so_every_api_agrees_after_a_restart(self):
+        manager = self.manager()
+        project = manager.create_project("講義")
+        kept = manager.create_project("定例")
+        sessions = []
+        for project_id in (project["id"], project["id"], kept["id"]):
+            session = self.create(manager)
+            manager.cancel(session)
+            manager.set_project(session, project_id)
+            sessions.append(session)
+        updated = [session.updated_at_utc for session in sessions]
+
+        # One is loaded in the new process, the others are only on disk.
+        later = self.manager()
+        later.get(sessions[0].id)
+        later.delete_project(project["id"])
+
+        restarted = self.manager()
+        self.assertEqual({row["id"]: row["project_id"] for row in restarted.list()},
+                         {sessions[0].id: None, sessions[1].id: None, sessions[2].id: kept["id"]})
+        for session, project_id, at in zip(sessions, (None, None, kept["id"]), updated):
+            self.assertEqual(restarted.get(session.id).public_dict()["project_id"], project_id)
+            saved = json.loads((self.root / "sessions" / f"{session.id}.json").read_text(encoding="utf-8"))
+            self.assertEqual(saved["session"]["project_id"], project_id)
+            self.assertEqual(saved["session"]["updated_at_utc"], at, "unfiling does not move the session in the list")
+
+        # A file that still names a deleted project (cut off before its cleanup) loads unassigned and is rewritten.
+        path = self.root / "sessions" / f"{sessions[1].id}.json"
+        saved = json.loads(path.read_text(encoding="utf-8"))
+        saved["session"]["project_id"] = "f" * 32
+        path.write_text(json.dumps(saved), encoding="utf-8")
+        fresh = self.manager()
+        self.assertIsNone(fresh.get(sessions[1].id).public_dict()["project_id"])
+        self.assertIsNone(json.loads(path.read_text(encoding="utf-8"))["session"]["project_id"])
+
     def test_the_default_data_folder_is_local_app_data_unless_configured(self):
         self.assertEqual(default_data_dir({"LOCALAPPDATA": r"C:\Users\u\AppData\Local"}), Path(r"C:\Users\u\AppData\Local") / "Yata")
         self.assertEqual(default_data_dir({"YATA_DATA_DIR": r"D:\yata-data", "LOCALAPPDATA": "x"}), Path(r"D:\yata-data"))

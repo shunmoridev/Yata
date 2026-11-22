@@ -1208,10 +1208,25 @@ test("the timeline ruler reads at each topic's start, leaving out starts too clo
   const { rulerMarks, sessionMap } = h.sandbox.YataHud;
   const topics = [0, 72_000, 126_000, 135_000, 297_000, 468_000].map((start, i) => ({ id: "t" + i, index: i + 1, status: "closed",
     start_ms: start, end_ms: start + 60_000 }));
-  assert.deepEqual([...rulerMarks(topics, 540_000, 540_000 * 1.02)], [0, 72_000, 126_000, 297_000, 468_000, 540_000]);
-  assert.deepEqual([...rulerMarks([], 540_000, 540_000 * 1.02)], [0, 540_000], "without topics: the start and the end");
-  assert.deepEqual([...rulerMarks(topics.slice(0, 2), 76_000, 76_000 * 1.02)], [0, 72_000], "the end gives way to a topic start");
+  const at = (...args) => [...rulerMarks(...args)].map((mark) => mark.ms);
+  assert.deepEqual(at(topics, 540_000, 540_000 * 1.02, 600), [0, 72_000, 126_000, 297_000, 468_000, 540_000]);
+  assert.deepEqual(at([], 540_000, 540_000 * 1.02, 600), [0, 540_000], "without topics: the start and the end");
+  assert.deepEqual(at(topics.slice(0, 2), 76_000, 76_000 * 1.02, 600), [0, 72_000], "the end gives way to a topic start");
+  // Narrow timelines keep fewer labels, and none of them overlap at any width.
+  assert.deepEqual(at(topics, 540_000, 540_000 * 1.02, 200), [0, 297_000, 468_000]);
+  for (const width of [120, 200, 320, 480, 900, 1400]) {
+    const marks = [...rulerMarks(topics, 540_000, 540_000 * 1.02, width)];
+    const boxes = marks.map(({ ms, align }) => {
+      const x = (ms / (540_000 * 1.02)) * width;
+      const size = h.sandbox.YataHud.clock(ms).length * 7;
+      const from = align === "first" ? x : align === "last" ? x - size : x - size / 2;
+      return [from, from + size];
+    });
+    boxes.slice(1).forEach(([from], i) => assert.ok(from >= boxes[i][1], `no overlap at ${width} px`));
+    boxes.forEach(([from, to]) => assert.ok(from >= 0 && to <= width + 0.01, `inside the track at ${width} px`));
+  }
   const container = new Element(h.doc);
+  container.clientWidth = 600;
   sessionMap(container, topics, [], 540_000);
   const ruler = container.children.find((node) => node.classes.has("map-ruler"));
   assert.deepEqual(ruler.children.map((mark) => mark.textContent), ["00:00", "01:12", "02:06", "04:57", "07:48", "09:00"]);
@@ -1245,6 +1260,47 @@ test("the caption stage keeps the whole history; only the newest line keeps its 
   const limited = new CaptionBoard(2);
   ["a", "b", "c"].forEach((key, i) => limited.addFinal({ segment_id: key, text: key, capture_start_ms: i }));
   assert.deepEqual([...limited.lines().map((line) => line.key)], ["b", "c"]);
+});
+
+test("the stage keeps only the newest rows in the page while it follows, and brings older ones in as the reader scrolls up", () => {
+  const doc = makeDocument();
+  const sandbox = { globalThis: {} };
+  sandbox.globalThis = sandbox;
+  runInNewContext(read("../web/assets/captions.js"), sandbox);
+  const { CaptionBoard, render, WINDOW_ROWS, OLDER_ROWS } = sandbox.YataCaptions;
+  const stage = new Element(doc);
+  const board = new CaptionBoard();
+  for (let i = 0; i < 1000; i++) board.addFinal({ segment_id: "e" + i, text: "line " + i, capture_start_ms: i * 1000 });
+  render(stage, board.lines(), false, { windowed: true });
+  assert.equal(stage.children.length, WINDOW_ROWS);
+  assert.equal(stage.children[0].textContent, "line " + (1000 - WINDOW_ROWS));
+  assert.equal(board.lines().length, 1000, "the board still holds every line");
+
+  // The reader scrolls to the top: older rows come in, and they stay while new lines arrive.
+  Object.assign(stage, { scrollHeight: 6000, clientHeight: 200, scrollTop: 0 });
+  stage.handlers.get("scroll")();
+  assert.equal(stage.children.length, WINDOW_ROWS + OLDER_ROWS);
+  assert.equal(stage.children[0].textContent, "line " + (1000 - WINDOW_ROWS - OLDER_ROWS));
+  Object.assign(stage, { scrollTop: 3000 });
+  board.addFinal({ segment_id: "e1000", text: "line 1000", capture_start_ms: 1_000_000 });
+  render(stage, board.lines(), false, { windowed: true });
+  assert.equal(stage.children.length, WINDOW_ROWS + OLDER_ROWS + 1);
+  assert.equal(stage.children[0].textContent, "line " + (1000 - WINDOW_ROWS - OLDER_ROWS));
+
+  // Back at the bottom the page keeps the newest rows only.
+  Object.assign(stage, { scrollTop: 6000 - 200 });
+  render(stage, board.lines(), false, { windowed: true });
+  assert.equal(stage.children.length, WINDOW_ROWS);
+  assert.equal(stage.children.at(-1).textContent, "line 1000");
+
+  // A short view (the small window) is not windowed and lets its old line rise out.
+  const pip = new Element(doc);
+  render(pip, board.lines().slice(-3), false);
+  const oldest = pip.children[0];
+  oldest.animate = () => ({ onfinish: null });
+  render(pip, board.lines().slice(-2), false);
+  assert.equal(pip.children[0], oldest, "the leaving row stays until its animation ends");
+  assert.ok(oldest.classes.has("leaving"));
 });
 
 test("projects group the sidebar: a folder per project, sessions moved by menu, and projects made, renamed and deleted", async () => {
@@ -1322,6 +1378,65 @@ test("while nothing is captured the scope greets in each caption language in tur
   assert.equal(wave.silent(), false, "a capture never shows it, even when quiet");
   wave.attach(null);
   assert.equal(wave.silent(), true, "it comes back once the capture ends");
+
+  // Drawn on a recording canvas: the greeting is written while idle and not in the first frame of a capture.
+  const texts = [];
+  const ctx = new Proxy({}, { get: (_target, name) => name === "measureText" ? () => ({ width: 10 })
+    : name === "fillText" ? (text) => texts.push(text)
+    : name.startsWith?.("create") ? () => ({ addColorStop() {} }) : () => {}, set: () => true });
+  const canvas = { getContext: () => ctx, clientWidth: 600, clientHeight: 200 };
+  const drawn = new h.sandbox.YataWaveform.Waveform(canvas);
+  drawn.draw();
+  assert.equal(texts.length, 1);
+  drawn.attach({ frequencyBinCount: 8, fftSize: 16, getByteFrequencyData() {}, getFloatTimeDomainData() {} });
+  drawn.draw();
+  assert.ok(drawn.quiet > 0.5, "the bars are still fading back in");
+  assert.equal(texts.length, 1, "but no greeting is drawn during the capture");
+});
+
+test("moving one session again before the server answers sends the moves in order and keeps the last choice", async () => {
+  const at = "2026-11-03T01:00:00Z";
+  const projects = [{ id: "p1", name: "講義", created_at_utc: at }, { id: "p2", name: "定例", created_at_utc: at }];
+  const server = { project_id: null };
+  const answers = [];
+  const h = harness({ replies: {
+    "GET /api/v1/sessions": () => ({ projects, sessions: [{ id: "s1", source_kind: "share", status: "ended", display_title: "第1回",
+      started_at_utc: at, updated_at_utc: at, duration_ms: 1000, project_id: server.project_id }] }),
+    // The server answers each move only when the test says so.
+    "PUT /api/v1/sessions/s1/project": (init) => new Promise((resolve) => answers.push(() => {
+      server.project_id = JSON.parse(init.body).project_id;
+      resolve({ project_id: server.project_id });
+    })),
+  } });
+  await flush();
+  const list = h.$("session-list");
+  const folderOf = () => list.find((node) => node.dataset?.sessionId === "s1")?.parent?.parent?.dataset?.projectId || null;
+  const move = async (name) => {
+    list.find((node) => node.dataset?.sessionId === "s1").find((node) => node.classes.has("session-move")).handlers.get("click")();
+    const menu = list.find((node) => node.classes.has("move-menu"));
+    menu.children.find((item) => item.textContent === name).handlers.get("click")();
+    await flush();
+  };
+  await move("講義");
+  await move("定例");
+  await move("未分類");
+  const puts = () => h.sent("PUT", "/api/v1/sessions/s1/project").map((request) => JSON.parse(request.init.body).project_id);
+  assert.deepEqual(puts(), ["p1"], "the next move waits for the one before");
+  assert.equal(folderOf(), null, "the list shows the last choice at once");
+  answers.shift()();
+  await flush(); await flush();
+  assert.deepEqual(puts(), ["p1", "p2"]);
+  // A refresh while moves are still on their way does not move the row back.
+  await h.sandbox.document.getElementById("session-search").handlers.get("input")({ target: { value: "" } });
+  assert.equal(folderOf(), null);
+  answers.shift()();
+  await flush(); await flush();
+  assert.deepEqual(puts(), ["p1", "p2", null]);
+  answers.shift()();
+  for (let i = 0; i < 4; i++) await flush();
+  assert.equal(server.project_id, null, "the server ends with the last choice");
+  assert.equal(folderOf(), null);
+  assert.equal(h.sent("GET", "/api/v1/sessions").length, 2, "the list is fetched again once, after the last move");
 });
 
 function i18nIn(languages, locale) {

@@ -160,6 +160,9 @@ class SessionManager:
             if session is None and self.archive is not None and SESSION_ID.fullmatch(session_id):
                 session = self.archive.load(session_id)
                 if session is not None:
+                    # A file written before its project was deleted (e.g. cut off mid-cleanup) loads unassigned.
+                    if session.project_id is not None and not self.projects.exists(session.project_id):
+                        self._file(session, None)
                     try:
                         self.store.add(session)
                     except SessionStoreFull as exc:
@@ -464,6 +467,9 @@ class SessionManager:
     def set_project(self, session: Session, project_id: Any) -> None:
         if project_id is not None and (not isinstance(project_id, str) or not self.projects.exists(project_id)):
             raise SessionError(t("プロジェクトが見つかりません。", "Project not found."))
+        self._file(session, project_id)
+
+    def _file(self, session: Session, project_id: str | None) -> None:
         with session.lock:
             if session.project_id == project_id:
                 return
@@ -492,11 +498,18 @@ class SessionManager:
             self.projects.delete(project_id)
         except ProjectError as exc:
             raise SessionError(str(exc)) from exc
-        # Loaded sessions drop the id now; saved ones list as unassigned and drop it when next written.
-        for session in self.store.sessions():
-            with session.lock:
+        # Every session filed there is unfiled and saved now, loaded or not, so no API answers with the deleted id.
+        with self._lock:
+            loaded = {session.id: session for session in self.store.sessions()}
+            for session in loaded.values():
                 if session.project_id == project_id:
-                    session.project_id = None
+                    self._file(session, None)
+            for row in self.archive.summaries() if self.archive is not None else []:
+                if row.get("project_id") != project_id or row["id"] in loaded:
+                    continue
+                saved = self.archive.load(row["id"])
+                if saved is not None:
+                    self._file(saved, None)
 
     def record_gap(self, session: Session, reason: str, start_ms: int | None = None, end_ms: int | None = None) -> None:
         if session.status in TERMINAL:

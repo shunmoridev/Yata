@@ -19,6 +19,8 @@
       this.keys = new Set();
       this.partial = null;
       this.translations = new Map();
+      // The final lines change only when a final or a translation arrives; partial updates reuse them.
+      this.cache = null;
     }
 
     addFinal(caption) {
@@ -38,6 +40,7 @@
         this.finals.splice(0, this.finals.length - this.maxFinals).forEach((dropped) => this.keys.delete(dropped.key));
       }
       if (this.partial && this.partial.utterance_id === caption.utterance_id) this.partial = null;
+      this.cache = null;
     }
 
     setPartial(caption) {
@@ -51,14 +54,18 @@
     }
 
     addTranslation(segmentId, text) {
-      if (segmentId && text) this.translations.set(segmentId, text);
+      if (!segmentId || !text || this.translations.get(segmentId) === text) return;
+      this.translations.set(segmentId, text);
+      this.cache = null;
     }
 
+    // A new array each call (callers may keep it); its final line objects are shared until the finals change.
     lines() {
-      const lines = this.finals.map((item) => ({
+      this.cache ||= this.finals.map((item) => ({
         kind: "final", key: item.key, utterance: item.utterance, text: item.text, language: item.language,
         speaker: item.speaker, translation: this.translations.get(item.key) || null,
       }));
+      const lines = this.cache.slice();
       if (this.partial) {
         lines.push({
           kind: "partial", key: "partial:" + this.partial.utterance_id, utterance: this.partial.utterance_id,
@@ -73,13 +80,49 @@
   // Only the newest rows are on screen while the view follows, so only they are measured for the slide.
   const SLIDE_ROWS = 8;
   const FOLLOW_SLACK_PX = 32;
+  // A windowed view (the stage) keeps the newest WINDOW_ROWS rows in the page while it follows; scrolling near the
+  // top brings older rows in, OLDER_ROWS at a time. The board still holds every line, so nothing is lost; the page
+  // just never lays out the whole history on every update.
+  const WINDOW_ROWS = 300;
+  const OLDER_ROWS = 200;
+  const OLDER_TRIGGER_PX = 120;
 
   class CaptionView {
-    constructor(container) {
+    constructor(container, options) {
       this.container = container;
       this.doc = container.ownerDocument;
       this.nodes = new Map();
       this.placeholder = null;
+      this.windowed = Boolean(options?.windowed);
+      this.firstKey = null;
+      this.start = 0;
+      this.older = false;
+      this.last = null;
+      if (this.windowed) container.addEventListener?.("scroll", () => this.maybeOlder());
+    }
+
+    // Near the top with older lines left out: bring them in and keep the rows the reader is looking at in place.
+    maybeOlder() {
+      const box = this.container;
+      if (!this.last || box.scrollTop > OLDER_TRIGGER_PX || this.start === 0) return;
+      const height = box.scrollHeight;
+      this.older = true;
+      this.update(this.last.lines, this.last.showTranslation);
+      box.scrollTop += box.scrollHeight - height;
+    }
+
+    // The first line in the page: the newest WINDOW_ROWS while following, else where the reader left it.
+    windowStart(lines, follow) {
+      if (!this.windowed) return 0;
+      const latest = Math.max(0, lines.length - WINDOW_ROWS);
+      let start = latest;
+      if (!follow && this.firstKey !== null) {
+        const at = lines[this.start]?.key === this.firstKey ? this.start : lines.findIndex((line) => line.key === this.firstKey);
+        if (at >= 0) start = Math.min(at, latest);
+      }
+      if (this.older) start = Math.max(0, start - OLDER_ROWS);
+      this.older = false;
+      return start;
     }
 
     // A view that scrolls follows the newest line unless the reader has scrolled up to read back.
@@ -97,6 +140,7 @@
     update(lines, showTranslation) {
       const doc = this.doc;
       const follow = this.following();
+      this.last = { lines, showTranslation };
       if (!lines.length) {
         this.clear();
         if (!this.placeholder) {
@@ -112,9 +156,13 @@
         this.placeholder = null;
       }
       const before = this.positions(lines);
+      const start = this.windowStart(lines, follow);
+      this.start = start;
+      this.firstKey = lines[start].key;
       const wanted = new Set();
       const order = [];
-      lines.forEach((line, index) => {
+      lines.slice(start).forEach((line, offset) => {
+        const index = start + offset;
         const key = line.key;
         let node = this.nodes.get(key);
         const partialKey = line.utterance ? "partial:" + line.utterance : null;
@@ -135,7 +183,9 @@
       for (const [key, node] of [...this.nodes]) {
         if (wanted.has(key)) continue;
         this.nodes.delete(key);
-        this.leave(node.row);
+        // Rows leaving the stage's window go at once; a short view (the small window) lets its old line rise out.
+        if (this.windowed) node.row.remove?.();
+        else this.leave(node.row);
       }
       // Moving a node restarts its animations, so reorder only when the order really changed.
       const ordered = new Set(order);
@@ -148,6 +198,7 @@
     clear() {
       for (const node of this.nodes.values()) node.row.remove?.();
       this.nodes.clear();
+      this.firstKey = null;
       this.container.replaceChildren(...(this.placeholder ? [this.placeholder] : []));
     }
 
@@ -261,14 +312,15 @@
   }
 
   const views = new WeakMap();
-  function render(container, lines, showTranslation) {
+  // options.windowed: the stage, which scrolls through the whole history (see WINDOW_ROWS).
+  function render(container, lines, showTranslation, options) {
     let view = views.get(container);
     if (!view) {
-      view = new CaptionView(container);
+      view = new CaptionView(container, options);
       views.set(container, view);
     }
     view.update(lines, showTranslation);
   }
 
-  globalThis.YataCaptions = { CaptionBoard, CaptionView, LANGUAGES, languageLabel, render, speakerTone };
+  globalThis.YataCaptions = { CaptionBoard, CaptionView, LANGUAGES, languageLabel, render, speakerTone, WINDOW_ROWS, OLDER_ROWS };
 })();

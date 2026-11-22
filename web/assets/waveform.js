@@ -188,7 +188,8 @@
       }
       ctx.shadowBlur = 0;
       ctx.globalAlpha = 1;
-      if (this.quiet > 0.01) this.greet(now, mid, `rgba(${ar},${ag},${ab},1)`, `rgba(${r},${g},${b},0.35)`);
+      // The bars fade back in, but the greeting stops the moment a capture starts.
+      if (this.silent() && this.quiet > 0.01) this.greet(now, mid, `rgba(${ar},${ag},${ab},1)`, `rgba(${r},${g},${b},0.35)`);
 
       if (this.analyser) {
         ctx.strokeStyle = `rgba(${ar},${ag},${ab},${0.25 + this.speech * 0.35})`;

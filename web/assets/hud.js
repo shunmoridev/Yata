@@ -117,28 +117,46 @@
     track.append(head);
     const ruler = doc.createElement("div");
     ruler.className = "map-ruler";
-    rulerMarks(topics, total / 1.02, total).forEach((ms, index, marks) => {
+    const width = container.clientWidth || container.getBoundingClientRect?.().width || 0;
+    rulerMarks(topics, total / 1.02, total, width).forEach(({ ms, align }) => {
       const mark = doc.createElement("span");
       mark.textContent = clock(ms);
-      // Marks near either edge align to it instead of centring, so they stay inside the track.
-      if (index === 0 && ms / total < 0.04) mark.className = "first";
-      else if (index === marks.length - 1 && ms / total > 0.92) mark.className = "last";
+      if (align !== "center") mark.className = align;
       if (mark.style) mark.style.left = pct(ms);
       ruler.append(mark);
     });
     container.append(track, ruler);
   }
 
-  // The ruler reads at each topic's start; a start too close to the one before is left out so labels never overlap.
-  // The end is shown when it has room. Without topics the ruler spans the start and the end.
-  function rulerMarks(topics, endMs, totalMs, minGap = 0.08) {
+  // The ruler's labels are monospace digits, 10 px in the HUD and 11 px in the soft theme (at most about 6.7 px a
+  // character), and the room kept between two labels.
+  const RULER_CHAR_PX = 7;
+  const RULER_SPACE_PX = 8;
+  const RULER_FALLBACK_PX = 600;
+
+  // The ruler reads at each topic's start. Spacing is worked out in pixels on the ruler's own width: a label that
+  // would touch the one before is left out, so labels never overlap however narrow the timeline is. The end is
+  // shown when it has room. Without topics the ruler spans the start and the end. Labels near either edge align to
+  // it instead of centring, so they stay inside the track.
+  function rulerMarks(topics, endMs, totalMs, widthPx) {
+    const width = widthPx > 0 ? widthPx : RULER_FALLBACK_PX;
+    const place = (ms) => {
+      const x = (Math.max(0, ms) / totalMs) * width;
+      const size = clock(ms).length * RULER_CHAR_PX;
+      const align = x < size / 2 ? "first" : x > width - size / 2 ? "last" : "center";
+      const from = align === "first" ? x : align === "last" ? x - size : x - size / 2;
+      return { ms, align, from, to: from + size };
+    };
     const starts = topics.map((topic) => Math.max(0, topic.start_ms || 0)).sort((a, b) => a - b);
     const marks = [];
+    const fits = (mark) => !marks.length || mark.from >= marks[marks.length - 1].to + RULER_SPACE_PX;
     for (const ms of starts.length ? starts : [0]) {
-      if (!marks.length || (ms - marks[marks.length - 1]) / totalMs >= minGap) marks.push(ms);
+      const mark = place(ms);
+      if (fits(mark)) marks.push(mark);
     }
-    if ((endMs - marks[marks.length - 1]) / totalMs >= minGap) marks.push(endMs);
-    return marks;
+    const end = place(endMs);
+    if (fits(end)) marks.push(end);
+    return marks.map(({ ms, align }) => ({ ms, align }));
   }
 
   globalThis.YataHud = { gauge, radar, sessionMap, rulerMarks, clock };

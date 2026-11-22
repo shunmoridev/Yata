@@ -9,7 +9,8 @@
     speakers: new Map(), lastSpeaker: null, filter: "all", search: "", showTranslation: true,
     rows: new Map(), lastReason: null, speakingTimer: null, models: false,
     sessions: [], sourceKind: "share", armed: null, armTimer: null, sessionQuery: "", listSignature: "",
-    projects: [], collapsedProjects: new Set(), editingProject: null, moveMenu: null,
+    projects: [], collapsedProjects: new Set(), editingProject: null, moveMenu: null, pendingMoves: new Map(), moveChains: new Map(),
+    listRequest: 0,
     asrLimits: [600, 1500], slackReady: false,
     view: "session", setup: null, setupTimer: null, setupTicks: 0, setupLoading: false, setupSignature: "",
     planDraft: null, llmDraft: null, translationDraft: null, setupBrief: null, asrReady: true,
@@ -342,7 +343,7 @@
   function renderCaptions() {
     const lines = state.captions.lines();
     const translate = Boolean(state.session?.caption_language);
-    YataCaptions.render($("caption-lines"), lines, translate);
+    YataCaptions.render($("caption-lines"), lines, translate, { windowed: true });
     showCaptionJump();
     // The small window shows the newest lines only: the last two finals and the line being spoken.
     if (state.pip) YataCaptions.render(state.pip.box, lines.slice(-PIP_LINES), translate);
@@ -780,7 +781,10 @@
 
   async function refreshSessions() {
     try {
+      // Lists can be requested while one is on its way; only the newest request's answer is used.
+      const request = ++state.listRequest;
       const listed = await api("/api/v1/sessions");
+      if (request !== state.listRequest) return;
       state.sessions = listed.sessions || [];
       state.projects = listed.projects || [];
     } catch (error) {
@@ -798,6 +802,9 @@
     if (current && !rows.some((row) => row.id === current.id)) {
       rows = [Object.assign({}, current, { updated_at_utc: new Date().toISOString(), duration_ms: elapsedMs(), topic_count: state.topics.size,
         segment_count: state.evidence.size })].concat(rows);
+    }
+    if (state.pendingMoves.size) {
+      rows = rows.map((row) => state.pendingMoves.has(row.id) ? Object.assign({}, row, { project_id: state.pendingMoves.get(row.id) }) : row);
     }
     const options = { currentId: current?.id, locked: Boolean(state.capture) || state.busy, armedId: state.armed, query: state.sessionQuery,
       projects: state.projects, collapsed: [...state.collapsedProjects], editingId: state.editingProject, menuId: state.moveMenu };
@@ -882,18 +889,21 @@
     await refreshSessions();
   }
 
+  // Moves of one session go to the server one after another, so the last choice is the one that stays. Until the
+  // last of them is answered the list shows that choice, whatever a refresh in between says.
   async function moveSession(sessionId, projectId) {
     state.moveMenu = null;
-    const row = state.sessions.find((item) => item.id === sessionId);
-    // The list moves the row at once; the server's answer (or the next refresh) settles it.
-    if (row) row.project_id = projectId;
+    state.pendingMoves.set(sessionId, projectId);
     if (state.session?.id === sessionId) state.session.project_id = projectId;
     renderSessions();
-    try {
-      await api("/api/v1/sessions/" + sessionId + "/project", { method: "PUT", body: { project_id: projectId } });
-    } catch (error) {
-      message(t("toast.projectFailed", { error: error.message }), true);
-    }
+    const send = () => api("/api/v1/sessions/" + sessionId + "/project", { method: "PUT", body: { project_id: projectId } })
+      .catch((error) => message(t("toast.projectFailed", { error: error.message }), true));
+    const chain = (state.moveChains.get(sessionId) || Promise.resolve()).then(send);
+    state.moveChains.set(sessionId, chain);
+    await chain;
+    if (state.moveChains.get(sessionId) !== chain) return;
+    state.moveChains.delete(sessionId);
+    state.pendingMoves.delete(sessionId);
     await refreshSessions();
   }
 
@@ -1402,6 +1412,16 @@
     const saved = Number(localStorage.getItem(SIDE_WIDTH));
     if (saved > 0) setSideWidth(saved, false);
   } catch { /* storage off: the default width */ }
+  // The ruler's labels are spaced for the timeline's width, so a resize lays them out again.
+  if (typeof ResizeObserver === "function") {
+    let mapWidth = 0;
+    new ResizeObserver(([entry]) => {
+      const width = Math.round(entry.contentRect.width);
+      if (width === mapWidth) return;
+      mapWidth = width;
+      renderMap();
+    }).observe($("session-map"));
+  }
   $("new-project").addEventListener("click", newProject);
   // The move menu closes on a click elsewhere or Escape.
   document.addEventListener?.("click", (event) => {
