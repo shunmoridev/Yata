@@ -142,9 +142,10 @@
       if (this.older) start = Math.max(0, start - OLDER_ROWS);
       if (this.newer) end = Math.min(lines.length, end + OLDER_ROWS);
       if (end - start > MAX_WINDOW_ROWS) {
-        // When paging backward, evict the newest rows; when paging forward, evict the oldest.
-        if (this.older) end = start + MAX_WINDOW_ROWS;
-        else start = end - MAX_WINDOW_ROWS;
+        // Protect the reader's position when live lines arrive while scrolled back.
+        // Only paging forward evicts from the top; otherwise discard the newest off-screen rows.
+        if (this.newer) start = end - MAX_WINDOW_ROWS;
+        else end = start + MAX_WINDOW_ROWS;
       }
       return [start, end];
     }
