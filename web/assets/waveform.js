@@ -1,6 +1,19 @@
 (() => {
   "use strict";
   const BARS = 112;
+  // While nothing is being captured the scope greets in the caption languages, one after another.
+  const GREETINGS = ["こんにちは", "Hello", "你好", "안녕하세요", "Bonjour", "¡Hola!", "Hallo", "Ciao", "Olá", "Привет", "नमस्ते",
+    "Halo", "สวัสดี", "Xin chào", "مرحبا"];
+  const GREETING_MS = 2600;
+  const GREETING_FADE_MS = 450;
+
+  // The greeting shown at a moment, and how visible it is: it fades in and out at each change (no fade with reduced motion).
+  function greetingAt(ms, reduced) {
+    const index = Math.floor(ms / GREETING_MS);
+    const into = ms - index * GREETING_MS;
+    const alpha = reduced ? 1 : Math.max(0, Math.min(1, into / GREETING_FADE_MS, (GREETING_MS - into) / GREETING_FADE_MS));
+    return { text: GREETINGS[((index % GREETINGS.length) + GREETINGS.length) % GREETINGS.length], alpha };
+  }
 
   function hexToRgb(hex) {
     const value = parseInt(String(hex).replace("#", ""), 16);
@@ -20,6 +33,8 @@
       this.speech = 0; // 0..1, eased toward the target so the glow swells and fades
       this.speechTarget = 0;
       this.frame = 0;
+      this.quiet = 1; // 0..1, eased: how much the greeting shows over the bars
+      this.font = "sans-serif";
       this.running = false;
       this.reduced = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
       if (this.ctx && typeof ResizeObserver === "function") {
@@ -39,6 +54,18 @@
     setTint(color, accent) {
       this.tint = color || "#0eb2d4";
       this.accent = accent || "#6152f3";
+      this.readFont();
+    }
+
+    // The theme changes the page font; the canvas follows it.
+    readFont() {
+      const family = this.canvas && typeof getComputedStyle === "function" ? getComputedStyle(this.canvas).fontFamily : "";
+      this.font = family || "sans-serif";
+    }
+
+    // The greeting shows only while no input is attached; a capture never shows it, even when quiet.
+    silent() {
+      return !this.analyser;
     }
 
     setSpeech(active) {
@@ -55,6 +82,7 @@
       this.ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
       this.width = width;
       this.height = height;
+      this.readFont();
     }
 
     start() {
@@ -125,6 +153,8 @@
       }
       const level = this.level();
       this.onLevel(level);
+      const now = typeof performance === "object" ? performance.now() : Date.now();
+      this.quiet += ((this.silent() ? 1 : 0) - this.quiet) * (this.reduced ? 1 : 0.06);
       ctx.clearRect(0, 0, width, height);
 
       const [r, g, b] = hexToRgb(this.tint);
@@ -148,6 +178,8 @@
       ctx.fillStyle = gradient;
       ctx.shadowColor = `rgba(${r},${g},${b},${0.35 + this.speech * 0.45})`;
       ctx.shadowBlur = 8 + this.speech * 14;
+      // The greeting takes the front while it is quiet; the bars step back behind it.
+      ctx.globalAlpha = 1 - this.quiet * 0.65;
       for (let i = 0; i < BARS; i++) {
         const h = Math.max(2, this.heights[i] * height * 0.86);
         const x = left + i * (barWidth + gap);
@@ -155,6 +187,8 @@
         roundRect(ctx, x, mid - h / 2, barWidth, h, radius);
       }
       ctx.shadowBlur = 0;
+      ctx.globalAlpha = 1;
+      if (this.quiet > 0.01) this.greet(now, mid, `rgba(${ar},${ag},${ab},1)`, `rgba(${r},${g},${b},0.35)`);
 
       if (this.analyser) {
         ctx.strokeStyle = `rgba(${ar},${ag},${ab},${0.25 + this.speech * 0.35})`;
@@ -171,6 +205,30 @@
     }
   }
 
+  Waveform.prototype.greet = function greet(now, mid, color, glow) {
+    const ctx = this.ctx;
+    const { text, alpha } = greetingAt(now, this.reduced);
+    if (alpha <= 0) return;
+    // As large as fits: up to 30% of the height and 70% of the width.
+    let size = Math.max(14, this.height * 0.3);
+    ctx.font = `700 ${size}px ${this.font}`;
+    const measured = ctx.measureText(text).width;
+    if (measured > this.width * 0.7) {
+      size = Math.max(12, size * (this.width * 0.7) / measured);
+      ctx.font = `700 ${size}px ${this.font}`;
+    }
+    ctx.save();
+    ctx.globalAlpha = alpha * this.quiet;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = color;
+    ctx.shadowColor = glow;
+    ctx.shadowBlur = 10;
+    // A short rise as each greeting fades in.
+    ctx.fillText(text, this.width / 2, mid + (1 - alpha) * 6);
+    ctx.restore();
+  };
+
   function roundRect(ctx, x, y, w, h, r) {
     ctx.beginPath();
     ctx.moveTo(x + r, y);
@@ -182,5 +240,5 @@
     ctx.fill();
   }
 
-  globalThis.YataWaveform = { Waveform, BARS };
+  globalThis.YataWaveform = { Waveform, BARS, GREETINGS, GREETING_MS, greetingAt };
 })();

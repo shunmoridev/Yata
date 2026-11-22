@@ -1305,6 +1305,25 @@ test("projects group the sidebar: a folder per project, sessions moved by menu, 
   assert.deepEqual(folders().map((node) => node.dataset.projectId), ["p2"]);
 });
 
+test("while nothing is captured the scope greets in each caption language in turn, fading between them", () => {
+  const h = harness();
+  const { GREETINGS, GREETING_MS, greetingAt } = h.sandbox.YataWaveform;
+  assert.equal(GREETINGS.length, h.sandbox.YataCaptions.LANGUAGES.length, "one greeting per caption language");
+  assert.equal(greetingAt(0).text, "こんにちは");
+  assert.equal(greetingAt(0).alpha, 0, "each greeting fades in");
+  assert.equal(greetingAt(GREETING_MS / 2).alpha, 1);
+  assert.equal(greetingAt(GREETING_MS + 10).text, "Hello");
+  assert.equal(greetingAt(GREETING_MS * GREETINGS.length).text, "こんにちは", "the list starts over");
+  assert.equal(greetingAt(0, true).alpha, 1, "reduced motion switches without the fade");
+
+  const wave = new h.sandbox.YataWaveform.Waveform(null);
+  assert.equal(wave.silent(), true, "with no input the scope greets");
+  wave.attach({ frequencyBinCount: 8, fftSize: 16 });
+  assert.equal(wave.silent(), false, "a capture never shows it, even when quiet");
+  wave.attach(null);
+  assert.equal(wave.silent(), true, "it comes back once the capture ends");
+});
+
 function i18nIn(languages, locale) {
   const doc = makeDocument();
   doc.documentElement = new Element(doc, "html");
