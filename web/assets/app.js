@@ -5,10 +5,12 @@
   const body = document.body;
   const state = {
     session: null, cursor: 0, evidence: new Map(), topics: new Map(), digest: null, gaps: new YataGapLedger(),
-    captions: new YataCaptions.CaptionBoard(2), capture: null, clientStats: null, pip: null, poll: null, busy: false, polling: false,
+    captions: new YataCaptions.CaptionBoard(), capture: null, clientStats: null, pip: null, poll: null, busy: false, polling: false,
     speakers: new Map(), lastSpeaker: null, filter: "all", search: "", showTranslation: true,
     rows: new Map(), lastReason: null, speakingTimer: null, models: false,
     sessions: [], sourceKind: "share", armed: null, armTimer: null, sessionQuery: "", listSignature: "",
+    projects: [], collapsedProjects: new Set(), editingProject: null, moveMenu: null, pendingMoves: new Map(), moveChains: new Map(),
+    listRequest: 0,
     asrLimits: [600, 1500], slackReady: false,
     view: "session", setup: null, setupTimer: null, setupTicks: 0, setupLoading: false, setupSignature: "",
     planDraft: null, llmDraft: null, translationDraft: null, setupBrief: null, asrReady: true,
@@ -172,7 +174,7 @@
     state.topics.clear();
     state.digest = null;
     state.gaps = new YataGapLedger();
-    state.captions = new YataCaptions.CaptionBoard(2);
+    state.captions = new YataCaptions.CaptionBoard();
     state.clientStats = null;
     state.speakers.clear();
     state.lastSpeaker = null;
@@ -341,8 +343,86 @@
   function renderCaptions() {
     const lines = state.captions.lines();
     const translate = Boolean(state.session?.caption_language);
-    YataCaptions.render($("caption-lines"), lines, translate);
-    if (state.pip) YataCaptions.render(state.pip.box, lines, translate);
+    YataCaptions.render($("caption-lines"), lines, translate, { windowed: true });
+    showCaptionJump();
+    // The small window shows the newest lines only: the last two finals and the line being spoken.
+    if (state.pip) YataCaptions.render(state.pip.box, lines.slice(-PIP_LINES), translate);
+  }
+
+  const PIP_LINES = 3;
+
+  // Scrolled back through the history, the stage offers a way back to the newest line.
+  function showCaptionJump() {
+    const box = $("caption-lines");
+    const behind = box.dataset.historyBehind === "true"
+      || Boolean(box.scrollHeight) && box.scrollHeight - box.scrollTop - box.clientHeight > 32;
+    $("caption-jump").hidden = !behind;
+  }
+
+  function jumpToLatestCaption() {
+    const box = $("caption-lines");
+    YataCaptions.jumpToLatest(box);
+    box.scrollTo?.({ top: box.scrollHeight, behavior: "smooth" });
+    showCaptionJump();
+  }
+
+  const CAPTION_HEIGHT = "yata.captionHeight";
+  const SIDEBAR_WIDTH = "yata.sidebarWidth";
+
+  // A divider the user drags (or moves with the arrow keys) to size one box; the size is remembered in this browser.
+  function bindResizer({ handle, key, min, max, measure, apply, axis, step = 24 }) {
+    const clamp = (value) => Math.round(Math.max(min, Math.min(max(), value)));
+    const set = (value, save) => {
+      if (value == null) {
+        apply(null);
+        handle.removeAttribute?.("aria-valuenow");
+        try { localStorage.removeItem(key); } catch { /* storage off: only this page forgets */ }
+        return;
+      }
+      const size = clamp(value);
+      apply(size);
+      handle.setAttribute("aria-valuenow", String(size));
+      if (save) {
+        try { localStorage.setItem(key, String(size)); } catch { /* storage off: the size lasts this page */ }
+      }
+    };
+    handle.addEventListener("pointerdown", (event) => {
+      if (event.button !== undefined && event.button !== 0) return;
+      const origin = axis === "x" ? event.clientX : event.clientY;
+      const start = measure();
+      handle.setPointerCapture?.(event.pointerId);
+      handle.classList.add("dragging");
+      body.classList.add(axis === "x" ? "resizing" : "resizing-rows");
+      const move = (moved) => set(start + (axis === "x" ? moved.clientX : moved.clientY) - origin, false);
+      const end = () => {
+        handle.classList.remove("dragging");
+        body.classList.remove("resizing", "resizing-rows");
+        handle.removeEventListener("pointermove", move);
+        handle.removeEventListener("pointerup", end);
+        handle.removeEventListener("pointercancel", end);
+        set(measure(), true);
+      };
+      handle.addEventListener("pointermove", move);
+      handle.addEventListener("pointerup", end);
+      handle.addEventListener("pointercancel", end);
+      event.preventDefault?.();
+    });
+    handle.addEventListener("keydown", (event) => {
+      const grow = axis === "x" ? "ArrowRight" : "ArrowDown";
+      const shrink = axis === "x" ? "ArrowLeft" : "ArrowUp";
+      const amount = event.shiftKey ? step * 4 : step;
+      if (event.key === grow) set(measure() + amount, true);
+      else if (event.key === shrink) set(measure() - amount, true);
+      else if (event.key === "Home" || event.key === "Escape") set(null);
+      else return;
+      event.preventDefault?.();
+    });
+    handle.addEventListener("dblclick", () => set(null));
+    try {
+      const saved = Number(localStorage.getItem(key));
+      if (saved > 0) set(saved, false);
+    } catch { /* storage off: the default size */ }
+    return set;
   }
 
   // The feed is built incrementally so rows animate only when they arrive.
@@ -704,7 +784,12 @@
 
   async function refreshSessions() {
     try {
-      state.sessions = (await api("/api/v1/sessions")).sessions || [];
+      // Lists can be requested while one is on its way; only the newest request's answer is used.
+      const request = ++state.listRequest;
+      const listed = await api("/api/v1/sessions");
+      if (request !== state.listRequest) return;
+      state.sessions = listed.sessions || [];
+      state.projects = listed.projects || [];
     } catch (error) {
       return;  // the list is secondary; the health check reports a dead API
     }
@@ -721,14 +806,108 @@
       rows = [Object.assign({}, current, { updated_at_utc: new Date().toISOString(), duration_ms: elapsedMs(), topic_count: state.topics.size,
         segment_count: state.evidence.size })].concat(rows);
     }
-    const options = { currentId: current?.id, locked: Boolean(state.capture) || state.busy, armedId: state.armed, query: state.sessionQuery };
+    if (state.pendingMoves.size) {
+      rows = rows.map((row) => state.pendingMoves.has(row.id) ? Object.assign({}, row, { project_id: state.pendingMoves.get(row.id) }) : row);
+    }
+    const options = { currentId: current?.id, locked: Boolean(state.capture) || state.busy, armedId: state.armed, query: state.sessionQuery,
+      projects: state.projects, collapsed: [...state.collapsedProjects], editingId: state.editingProject, menuId: state.moveMenu };
     // Polling calls this every second; rebuild the list only when something on it changed.
-    const signature = JSON.stringify([options, rows.map((row) => [row.id, row.display_title, row.status, row.topic_count,
+    const signature = JSON.stringify([options, rows.map((row) => [row.id, row.display_title, row.status, row.topic_count, row.project_id,
       ["ended", "cancelled", "error"].includes(row.status) ? row.duration_ms : 0, row.updated_at_utc?.slice(0, 10)])]);
     if (signature === state.listSignature) return;
+    // A rebuild would take the name field away from the user while they type.
+    if (state.editingProject && state.listSignature && document.activeElement?.classList?.contains("project-name-input")) return;
     state.listSignature = signature;
     $("session-total").textContent = String(rows.length);
-    YataSessions.renderList($("session-list"), rows, Object.assign(options, { formatTime, onOpen: openSession, onDelete: requestDelete }));
+    YataSessions.renderList($("session-list"), rows, Object.assign(options, {
+      collapsed: state.collapsedProjects, formatTime, onOpen: openSession, onDelete: requestDelete,
+      onToggle: toggleProject, onStartRename: startRenameProject, onRename: renameProject, onDeleteProject: requestDeleteProject,
+      onMenu: (id) => { state.moveMenu = id; renderSessions(); }, onMove: moveSession,
+    }));
+  }
+
+  const COLLAPSED_PROJECTS = "yata.collapsedProjects";
+
+  function toggleProject(id) {
+    if (state.collapsedProjects.has(id)) state.collapsedProjects.delete(id);
+    else state.collapsedProjects.add(id);
+    try { localStorage.setItem(COLLAPSED_PROJECTS, JSON.stringify([...state.collapsedProjects])); } catch { /* storage off: this page only */ }
+    renderSessions();
+  }
+
+  async function newProject() {
+    try {
+      const { project } = await api("/api/v1/projects", { method: "POST", body: { name: t("projects.untitled") } });
+      state.projects = state.projects.concat([project]);
+      state.collapsedProjects.delete(project.id);
+      state.editingProject = project.id;
+      renderSessions();
+    } catch (error) {
+      message(t("toast.projectFailed", { error: error.message }), true);
+    }
+  }
+
+  function startRenameProject(id) {
+    state.editingProject = id;
+    renderSessions();
+  }
+
+  async function renameProject(id, name) {
+    state.editingProject = null;
+    const project = state.projects.find((item) => item.id === id);
+    const clean = String(name ?? "").trim();
+    if (!project || name == null || !clean || clean === project.name) {
+      renderSessions();
+      return;
+    }
+    project.name = clean;
+    renderSessions();
+    try {
+      await api("/api/v1/projects/" + id, { method: "PATCH", body: { name: clean } });
+    } catch (error) {
+      message(t("toast.projectFailed", { error: error.message }), true);
+    }
+    await refreshSessions();
+  }
+
+  function requestDeleteProject(id) {
+    clearTimeout(state.armTimer);
+    const key = "project:" + id;
+    if (state.armed !== key) {
+      state.armed = key;
+      state.armTimer = setTimeout(() => { state.armed = null; renderSessions(); }, 3000);
+      renderSessions();
+      return;
+    }
+    state.armed = null;
+    deleteProject(id);
+  }
+
+  async function deleteProject(id) {
+    try {
+      await api("/api/v1/projects/" + id, { method: "DELETE" });
+    } catch (error) {
+      message(t("toast.projectFailed", { error: error.message }), true);
+    }
+    await refreshSessions();
+  }
+
+  // Moves of one session go to the server one after another, so the last choice is the one that stays. Until the
+  // last of them is answered the list shows that choice, whatever a refresh in between says.
+  async function moveSession(sessionId, projectId) {
+    state.moveMenu = null;
+    state.pendingMoves.set(sessionId, projectId);
+    if (state.session?.id === sessionId) state.session.project_id = projectId;
+    renderSessions();
+    const send = () => api("/api/v1/sessions/" + sessionId + "/project", { method: "PUT", body: { project_id: projectId } })
+      .catch((error) => message(t("toast.projectFailed", { error: error.message }), true));
+    const chain = (state.moveChains.get(sessionId) || Promise.resolve()).then(send);
+    state.moveChains.set(sessionId, chain);
+    await chain;
+    if (state.moveChains.get(sessionId) !== chain) return;
+    state.moveChains.delete(sessionId);
+    state.pendingMoves.delete(sessionId);
+    await refreshSessions();
   }
 
   function showSidebar(open) {
@@ -765,7 +944,7 @@
     });
     // The feed keeps its newest 400 rows in the DOM, as during a live session.
     snapshot.evidence.slice(-400).forEach(addEvidence);
-    snapshot.evidence.slice(-2).forEach((item) => state.captions.addFinal({ ...item, segment_id: item.id }));
+    snapshot.evidence.forEach((item) => state.captions.addFinal({ ...item, segment_id: item.id }));
     snapshot.topics.forEach((topic) => state.topics.set(topic.id, topic));
     state.digest = snapshot.digest;
     (snapshot.gaps || []).forEach((gap) => state.gaps.add({ cursor: gap.cursor, type: "gap", data: gap }));
@@ -1236,6 +1415,52 @@
     const saved = Number(localStorage.getItem(SIDE_WIDTH));
     if (saved > 0) setSideWidth(saved, false);
   } catch { /* storage off: the default width */ }
+  // The ruler's labels are spaced for the timeline's width, so a resize lays them out again.
+  if (typeof ResizeObserver === "function") {
+    let mapWidth = 0;
+    new ResizeObserver(([entry]) => {
+      const width = Math.round(entry.contentRect.width);
+      if (width === mapWidth) return;
+      mapWidth = width;
+      renderMap();
+    }).observe($("session-map"));
+  }
+  $("new-project").addEventListener("click", newProject);
+  // The move menu closes on a click elsewhere or Escape.
+  document.addEventListener?.("click", (event) => {
+    if (!state.moveMenu || event.target?.closest?.(".move-menu, .session-move")) return;
+    state.moveMenu = null;
+    renderSessions();
+  });
+  document.addEventListener?.("keydown", (event) => {
+    if (event.key !== "Escape" || !state.moveMenu) return;
+    state.moveMenu = null;
+    renderSessions();
+  });
+  try {
+    const saved = JSON.parse(localStorage.getItem(COLLAPSED_PROJECTS) || "[]");
+    if (Array.isArray(saved)) saved.forEach((id) => state.collapsedProjects.add(String(id)));
+  } catch { /* storage off: every folder starts open */ }
+  $("caption-lines").addEventListener("scroll", showCaptionJump);
+  $("caption-jump").addEventListener("click", jumpToLatestCaption);
+  bindResizer({
+    handle: $("caption-resizer"), key: CAPTION_HEIGHT, axis: "y", min: 120, max: () => Math.max(160, (window.innerHeight || 900) * 0.8),
+    measure: () => $("caption-stage").getBoundingClientRect?.().height || 220,
+    apply: (px) => {
+      const stage = $("caption-stage");
+      if (px == null) stage.style.removeProperty?.("--caption-height");
+      else stage.style.setProperty("--caption-height", px + "px");
+      if (px != null) $("caption-lines").scrollTop = $("caption-lines").scrollHeight;
+    },
+  });
+  bindResizer({
+    handle: $("sidebar-resizer"), key: SIDEBAR_WIDTH, axis: "x", min: 220, max: () => Math.max(220, Math.min(520, (window.innerWidth || 1280) * 0.45)),
+    measure: () => $("sidebar").getBoundingClientRect?.().width || 284,
+    apply: (px) => {
+      if (px == null) body.style.removeProperty?.("--sidebar-width");
+      else body.style.setProperty("--sidebar-width", px + "px");
+    },
+  });
   $("open-settings").addEventListener("click", openSettings);
   $("settings-done").addEventListener("click", newSession);
   $("ui-language").addEventListener("change", saveLanguage);

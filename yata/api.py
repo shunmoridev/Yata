@@ -24,6 +24,7 @@ from .inputs.vad import FrameScorer, SileroVad
 from .models import Session, SessionStore
 from .ollama import OllamaClient
 from .preparation import Preparation, SetupError
+from .projects import ProjectStore
 from .state import SessionError, SessionManager
 from .topics import TopicPipeline
 
@@ -124,7 +125,7 @@ def create_app(
     app.state.speaker_trackers = {}
     app.state.manager = manager or SessionManager(
         TopicPipeline(app.state.preparation.llm, translator=app.state.preparation.translator), SessionStore(), sender=sender,
-        archive=SessionArchive(default_data_dir()), llm_allows=app.state.preparation.llm_allows,
+        archive=SessionArchive(default_data_dir()), projects=ProjectStore(default_data_dir()), llm_allows=app.state.preparation.llm_allows,
         translator_allows=app.state.preparation.translator_allows)
     app.state.audio_sockets = {}
     app.state.audio_stop_events = {}
@@ -329,7 +330,45 @@ def create_app(
     @app.get("/api/v1/sessions")
     async def list_sessions(request: Request) -> dict[str, Any]:
         _check_app(request)
-        return {"sessions": await run_in_threadpool(app.state.manager.list)}
+        manager = app.state.manager
+        sessions = await run_in_threadpool(manager.list)
+        return {"sessions": sessions, "projects": manager.projects.list()}
+
+    @app.post("/api/v1/projects")
+    async def create_project(request: Request, body: dict[str, Any]) -> dict[str, Any]:
+        _check_app(request)
+        try:
+            project = await run_in_threadpool(app.state.manager.create_project, body.get("name"))
+        except SessionError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {"project": project}
+
+    @app.patch("/api/v1/projects/{project_id}")
+    async def rename_project(request: Request, project_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        _check_app(request)
+        try:
+            project = await run_in_threadpool(app.state.manager.rename_project, project_id, body.get("name"))
+        except SessionError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {"project": project}
+
+    @app.delete("/api/v1/projects/{project_id}")
+    async def delete_project(request: Request, project_id: str) -> dict[str, Any]:
+        _check_app(request)
+        try:
+            await run_in_threadpool(app.state.manager.delete_project, project_id)
+        except SessionError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {"deleted": project_id}
+
+    @app.put("/api/v1/sessions/{session_id}/project")
+    async def session_project(request: Request, session_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        session = await run_in_threadpool(session_for, request, session_id)
+        try:
+            await run_in_threadpool(app.state.manager.set_project, session, body.get("project_id"))
+        except SessionError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {"project_id": session.project_id}
 
     @app.get("/api/v1/sessions/{session_id}")
     async def session_snapshot(request: Request, session_id: str) -> dict[str, Any]:

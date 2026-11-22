@@ -18,7 +18,7 @@ SESSION_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-
 _SESSION_FIELDS = (
     "id", "source_url", "source_title", "title_source", "source_kind", "active_input", "selected_model", "llm_backend",
     "started_at_utc", "updated_at_utc", "asr_language", "output_language", "caption_language", "slack_delivery", "summaries",
-    "translator", "notes", "clock_offset_ms", "clock_started_utc", "status", "status_reason", "last_ingest_at_utc",
+    "translator", "notes", "project_id", "clock_offset_ms", "clock_started_utc", "status", "status_reason", "last_ingest_at_utc",
     "topic_cursor", "topic_pending", "topic_tentative", "topic_recheck_size", "topic_split_next", "topic_progress_size",
     "translation_cursor", "digest", "digest_delivery_state", "text_bytes", "next_event_id",
 )
@@ -69,6 +69,8 @@ def from_record(record: dict[str, Any]) -> Session:
     translations = record.get("translations", {})
     session.translations = {str(key): str(value) for key, value in translations.items()} if isinstance(translations, dict) else {}
     session.gaps = [dict(item) for item in record.get("gaps", []) if isinstance(item, dict)]
+    if not isinstance(session.project_id, str) or not session.project_id:
+        session.project_id = None
     for name in ("clock_offset_ms", "next_event_id", "topic_cursor", "translation_cursor", "text_bytes"):
         value = getattr(session, name)
         if not isinstance(value, int) or isinstance(value, bool) or value < 0:

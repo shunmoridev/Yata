@@ -88,6 +88,8 @@ class Session:
     translator: str | None = None
     title_source: str = "user"
     notes: str = ""
+    # The project the session is filed under (ProjectStore); None is unassigned.
+    project_id: str | None = None
     # Session clock: capture times count listened time only, so a resumed session continues where it
     # stopped. clock_started_utc is when the current run began (None while stopped).
     clock_offset_ms: int = 0
@@ -154,6 +156,7 @@ class Session:
                 "topic_count": len(self.topics),
                 "segment_count": len(self.evidence),
                 "output_language": self.output_language,
+                "project_id": self.project_id,
             }
 
     def public_dict(self) -> dict[str, Any]:
@@ -176,6 +179,7 @@ class Session:
                 "summaries": self.summaries,
                 "translator": self.translator,
                 "notes": self.notes,
+                "project_id": self.project_id,
                 "clock_offset_ms": self.clock_offset_ms,
                 "clock_started_utc": self.clock_started_utc,
                 "updated_at_utc": self.updated_at_utc or self.started_at_utc,

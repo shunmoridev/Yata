@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import shutil
 import tempfile
 import unittest
@@ -13,6 +14,7 @@ from yata.api import create_app
 from yata.archive import INTERRUPTED, UNKNOWN_DELIVERY, SessionArchive, default_data_dir
 from yata.audio_socket import _base_capture_ms
 from yata.models import SessionStore, parse_utc
+from yata.projects import ProjectStore
 from yata.slack import DeliveryResult
 from yata.state import SessionError, SessionManager
 from yata.topics import TopicPipeline
@@ -65,7 +67,7 @@ class ArchiveTests(unittest.TestCase):
 
     def manager(self, llm=None, sender=None, store=None):
         return SessionManager(TopicPipeline(llm or NamingLLM()), store or SessionStore(), background=False,
-                              sender=sender, archive=SessionArchive(self.root))
+                              sender=sender, archive=SessionArchive(self.root), projects=ProjectStore(self.root))
 
     def create(self, manager, **settings):
         session = manager.create(source_url="", source_title="", source_kind="share", selected_model="qwen3:8b", **settings)
@@ -221,6 +223,133 @@ class ArchiveTests(unittest.TestCase):
         self.assertIsNot(again, first)
         self.assertEqual([item.text for item in again.evidence], ["新しいカメラを紹介します。"])
 
+    def test_a_session_is_filed_under_a_project_kept_across_restarts_and_unfiled_when_the_project_goes(self):
+        manager = self.manager()
+        with self.assertRaises(SessionError):
+            manager.create_project("   ")
+        with self.assertRaises(SessionError):
+            manager.create_project("x" * 81)
+        project = manager.create_project("  週次   定例 ")
+        self.assertEqual(project["name"], "週次 定例")
+        session = self.create(manager)
+        say(manager, session, "新しいカメラを紹介します。", 0)
+        manager.stop(session)
+        updated = session.updated_at_utc
+        with self.assertRaises(SessionError):
+            manager.set_project(session, "0" * 32)
+        manager.set_project(session, project["id"])
+        # Filing a session does not make it the newest one in the list.
+        self.assertEqual(session.updated_at_utc, updated)
+
+        later = self.manager()
+        self.assertEqual([item["name"] for item in later.projects.list()], ["週次 定例"])
+        self.assertEqual([row["project_id"] for row in later.list()], [project["id"]])
+        self.assertEqual(later.get(session.id).project_id, project["id"])
+        self.assertEqual(later.rename_project(project["id"], "月次")["name"], "月次")
+        later.delete_project(project["id"])
+        self.assertEqual(later.projects.list(), [])
+        self.assertEqual([row["project_id"] for row in later.list()], [None])
+        self.assertIsNone(later.get(session.id).project_id)
+        with self.assertRaises(SessionError):
+            later.delete_project(project["id"])
+        # A session file from before projects loads unassigned.
+        saved = json.loads((self.root / "sessions" / f"{session.id}.json").read_text(encoding="utf-8"))
+        del saved["session"]["project_id"]
+        (self.root / "sessions" / f"{session.id}.json").write_text(json.dumps(saved), encoding="utf-8")
+        self.assertIsNone(self.manager().get(session.id).project_id)
+
+    def test_deleting_a_project_unfiles_its_sessions_on_disk_so_every_api_agrees_after_a_restart(self):
+        manager = self.manager()
+        project = manager.create_project("講義")
+        kept = manager.create_project("定例")
+        sessions = []
+        for project_id in (project["id"], project["id"], kept["id"]):
+            session = self.create(manager)
+            manager.cancel(session)
+            manager.set_project(session, project_id)
+            sessions.append(session)
+        updated = [session.updated_at_utc for session in sessions]
+
+        # One is loaded in the new process, the others are only on disk.
+        later = self.manager()
+        later.get(sessions[0].id)
+        later.delete_project(project["id"])
+
+        restarted = self.manager()
+        self.assertEqual({row["id"]: row["project_id"] for row in restarted.list()},
+                         {sessions[0].id: None, sessions[1].id: None, sessions[2].id: kept["id"]})
+        for session, project_id, at in zip(sessions, (None, None, kept["id"]), updated):
+            self.assertEqual(restarted.get(session.id).public_dict()["project_id"], project_id)
+            saved = json.loads((self.root / "sessions" / f"{session.id}.json").read_text(encoding="utf-8"))
+            self.assertEqual(saved["session"]["project_id"], project_id)
+            self.assertEqual(saved["session"]["updated_at_utc"], at, "unfiling does not move the session in the list")
+
+        # A file that still names a deleted project (cut off before its cleanup) loads unassigned and is rewritten.
+        path = self.root / "sessions" / f"{sessions[1].id}.json"
+        saved = json.loads(path.read_text(encoding="utf-8"))
+        saved["session"]["project_id"] = "f" * 32
+        path.write_text(json.dumps(saved), encoding="utf-8")
+        fresh = self.manager()
+        self.assertIsNone(fresh.get(sessions[1].id).public_dict()["project_id"])
+        self.assertIsNone(json.loads(path.read_text(encoding="utf-8"))["session"]["project_id"])
+
+    def test_project_deletion_cannot_race_with_assignment_after_existence_check(self):
+        manager = self.manager()
+        project = manager.create_project("講義")
+        session = self.create(manager)
+        manager.cancel(session)
+
+        checked = threading.Event()
+        release = threading.Event()
+        delete_started = threading.Event()
+        delete_done = threading.Event()
+        errors = []
+        original_exists = manager.projects.exists
+
+        def paused_exists(project_id):
+            found = original_exists(project_id)
+            checked.set()
+            if not release.wait(timeout=5):
+                raise AssertionError("timed out waiting to resume existence check")
+            return found
+
+        manager.projects.exists = paused_exists
+
+        def assign():
+            try:
+                manager.set_project(session, project["id"])
+            except Exception as error:
+                errors.append(error)
+
+        def delete():
+            delete_started.set()
+            try:
+                manager.delete_project(project["id"])
+            except Exception as error:
+                errors.append(error)
+            finally:
+                delete_done.set()
+
+        writer = threading.Thread(target=assign)
+        remover = threading.Thread(target=delete)
+        writer.start()
+        try:
+            self.assertTrue(checked.wait(2), "the assignment reaches the existence check")
+            remover.start()
+            self.assertTrue(delete_started.wait(2))
+            self.assertFalse(delete_done.wait(0.05), "deletion must wait while assignment is in progress")
+        finally:
+            release.set()
+        writer.join(5)
+        remover.join(5)
+        self.assertFalse(writer.is_alive())
+        self.assertFalse(remover.is_alive())
+        self.assertEqual(errors, [])
+        self.assertIsNone(session.project_id)
+        restarted = self.manager()
+        self.assertEqual(restarted.projects.list(), [])
+        self.assertIsNone(restarted.get(session.id).project_id)
+
     def test_the_default_data_folder_is_local_app_data_unless_configured(self):
         self.assertEqual(default_data_dir({"LOCALAPPDATA": r"C:\Users\u\AppData\Local"}), Path(r"C:\Users\u\AppData\Local") / "Yata")
         self.assertEqual(default_data_dir({"YATA_DATA_DIR": r"D:\yata-data", "LOCALAPPDATA": "x"}), Path(r"D:\yata-data"))
@@ -274,9 +403,29 @@ class SessionApiTests(unittest.TestCase):
         self.assertEqual(self.client.get(f"/api/v1/sessions/{session_id}").status_code, 404)
         self.assertEqual(self.client.get("/api/v1/sessions").json()["sessions"], [])
 
+    def test_projects_are_created_renamed_assigned_and_deleted(self):
+        created = self.client.post("/api/v1/sessions", json={"source_kind": "share", "selected_model": "qwen3:8b"})
+        session_id = created.json()["session"]["id"]
+        self.assertEqual(self.client.post("/api/v1/projects", json={"name": ""}).status_code, 422)
+        project = self.client.post("/api/v1/projects", json={"name": "講義"}).json()["project"]
+        listed = self.client.get("/api/v1/sessions").json()
+        self.assertEqual(listed["projects"], [project])
+        self.assertEqual(self.client.put(f"/api/v1/sessions/{session_id}/project", json={"project_id": "nope"}).status_code, 422)
+        moved = self.client.put(f"/api/v1/sessions/{session_id}/project", json={"project_id": project["id"]})
+        self.assertEqual(moved.json(), {"project_id": project["id"]})
+        self.assertEqual(self.client.get("/api/v1/sessions").json()["sessions"][0]["project_id"], project["id"])
+        renamed = self.client.patch(f"/api/v1/projects/{project['id']}", json={"name": "講義 2"})
+        self.assertEqual(renamed.json()["project"]["name"], "講義 2")
+        self.assertEqual(self.client.delete(f"/api/v1/projects/{project['id']}").json(), {"deleted": project["id"]})
+        self.assertEqual(self.client.delete(f"/api/v1/projects/{project['id']}").status_code, 404)
+        listed = self.client.get("/api/v1/sessions").json()
+        self.assertEqual((listed["projects"], listed["sessions"][0]["project_id"]), ([], None))
+        self.assertEqual(self.client.put(f"/api/v1/sessions/{session_id}/project", json={"project_id": None}).json(), {"project_id": None})
+
     def test_routes_need_the_page_cookie(self):
         anonymous = TestClient(self.app, base_url="http://127.0.0.1:8765")
         self.assertEqual(anonymous.get("/api/v1/sessions").status_code, 401)
+        self.assertEqual(anonymous.post("/api/v1/projects", json={"name": "x"}).status_code, 401)
         self.assertEqual(anonymous.delete("/api/v1/sessions/" + "0" * 8 + "-0000-0000-0000-" + "0" * 12).status_code, 401)
 
 

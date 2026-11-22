@@ -12,6 +12,7 @@ from .i18n import t
 from .archive import SESSION_ID, SessionArchive
 from .models import TERMINAL, EvidenceSegment, Session, SessionStore, SessionStoreFull, utc_now
 from .ollama import SUMMARY_MODEL_ALLOWLIST
+from .projects import ProjectError, ProjectStore
 from .slack import SlackSender, format_digest, format_topic
 from .topics import TopicPipeline
 
@@ -51,8 +52,10 @@ class SessionManager:
     def __init__(self, pipeline: TopicPipeline, store: SessionStore | None = None, *, background: bool = True,
                  sender: SlackSender | None = None, archive: SessionArchive | None = None,
                  llm_allows: Callable[[str, str], bool] | None = None,
-                 translator_allows: Callable[[str, str], bool] | None = None) -> None:
+                 translator_allows: Callable[[str, str], bool] | None = None,
+                 projects: ProjectStore | None = None) -> None:
         self.pipeline = pipeline
+        self.projects = projects or ProjectStore()
         self.llm_allows = llm_allows or (lambda backend, model: backend == "ollama" and model in SUMMARY_MODEL_ALLOWLIST)
         self.translator_allows = translator_allows or (lambda model, language: False)
         self.store = store or SessionStore()
@@ -157,6 +160,9 @@ class SessionManager:
             if session is None and self.archive is not None and SESSION_ID.fullmatch(session_id):
                 session = self.archive.load(session_id)
                 if session is not None:
+                    # A file written before its project was deleted (e.g. cut off mid-cleanup) loads unassigned.
+                    if session.project_id is not None and not self.projects.exists(session.project_id):
+                        self._file(session, None)
                     try:
                         self.store.add(session)
                     except SessionStoreFull as exc:
@@ -168,6 +174,11 @@ class SessionManager:
     def list(self) -> list[dict[str, Any]]:
         rows = {item["id"]: item for item in (self.archive.summaries() if self.archive is not None else [])}
         rows.update({session.id: session.summary_dict() for session in self.store.sessions()})
+        # A deleted project leaves its sessions' ids behind; they list as unassigned.
+        known = {project["id"] for project in self.projects.list()}
+        for row in rows.values():
+            if row.get("project_id") not in known:
+                row["project_id"] = None
         return sorted(rows.values(), key=lambda item: item.get("updated_at_utc") or "", reverse=True)
 
     def delete(self, session: Session) -> None:
@@ -452,6 +463,56 @@ class SessionManager:
             session.notes = notes
             # The event moves the session's revision, which is what the autosave writes against.
             session.emit("session_notes", {"chars": len(notes)})
+
+    def set_project(self, session: Session, project_id: Any) -> None:
+        # Serialize project existence validation and assignment against deletion.
+        with self._lock:
+            if project_id is not None and (not isinstance(project_id, str) or not self.projects.exists(project_id)):
+                raise SessionError(t("プロジェクトが見つかりません。", "Project not found."))
+            self._file(session, project_id)
+
+    def _file(self, session: Session, project_id: str | None) -> None:
+        with session.lock:
+            if session.project_id == project_id:
+                return
+            session.project_id = project_id
+            # The event moves the revision the archive saves against; filing a session is not an update to it,
+            # so the list keeps its place and day.
+            updated = session.updated_at_utc
+            session.emit("session_project", {"project_id": project_id})
+            session.updated_at_utc = updated
+        self.save(session)
+
+    def create_project(self, name: Any) -> dict[str, Any]:
+        try:
+            return self.projects.create(name)
+        except ProjectError as exc:
+            raise SessionError(str(exc)) from exc
+
+    def rename_project(self, project_id: str, name: Any) -> dict[str, Any]:
+        try:
+            return self.projects.rename(project_id, name)
+        except ProjectError as exc:
+            raise SessionError(str(exc)) from exc
+
+    def delete_project(self, project_id: str) -> None:
+        # This lock also guards set_project, so cleanup cannot race with a new assignment.
+        with self._lock:
+            try:
+                self.projects.delete(project_id)
+            except ProjectError as exc:
+                raise SessionError(str(exc)) from exc
+            # Every session filed there is unfiled and saved now, loaded or not.
+            loaded = {session.id: session for session in self.store.sessions()}
+            for session in loaded.values():
+                if session.project_id == project_id:
+                    self._file(session, None)
+            for row in self.archive.summaries() if self.archive is not None else []:
+                if row.get("project_id") != project_id or row["id"] in loaded:
+                    continue
+                saved = self.archive.load(row["id"])
+                if saved is not None:
+                    self._file(saved, None)
 
     def record_gap(self, session: Session, reason: str, start_ms: int | None = None, end_ms: int | None = None) -> None:
         if session.status in TERMINAL:
