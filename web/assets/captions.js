@@ -80,11 +80,10 @@
   // Only the newest rows are on screen while the view follows, so only they are measured for the slide.
   const SLIDE_ROWS = 8;
   const FOLLOW_SLACK_PX = 32;
-  // A windowed view (the stage) keeps the newest WINDOW_ROWS rows in the page while it follows; scrolling near the
-  // top brings older rows in, OLDER_ROWS at a time. The board still holds every line, so nothing is lost; the page
-  // just never lays out the whole history on every update.
+  // Keep only a bounded slice of the session in the DOM. Both directions can page across the full history.
   const WINDOW_ROWS = 300;
   const OLDER_ROWS = 200;
+  const MAX_WINDOW_ROWS = 700;
   const OLDER_TRIGGER_PX = 120;
 
   class CaptionView {
@@ -95,34 +94,65 @@
       this.placeholder = null;
       this.windowed = Boolean(options?.windowed);
       this.firstKey = null;
+      this.lastKey = null;
       this.start = 0;
+      this.end = 0;
       this.older = false;
+      this.newer = false;
+      this.forceFollow = false;
+      this.shifting = false;
       this.last = null;
-      if (this.windowed) container.addEventListener?.("scroll", () => this.maybeOlder());
+      if (this.windowed) container.addEventListener?.("scroll", () => this.maybeShift());
     }
 
-    // Near the top with older lines left out: bring them in and keep the rows the reader is looking at in place.
-    maybeOlder() {
+    // Swap a page of rows in either direction while keeping the same visible anchor in place.
+    // Merely appending older rows would eventually put the entire transcript back in the DOM.
+    maybeShift() {
       const box = this.container;
-      if (!this.last || box.scrollTop > OLDER_TRIGGER_PX || this.start === 0) return;
+      if (this.shifting || !this.last) return;
+      const older = box.scrollTop <= OLDER_TRIGGER_PX && this.start > 0;
+      const newer = !older && this.end < this.last.lines.length
+        && box.scrollHeight - box.scrollTop - box.clientHeight <= OLDER_TRIGGER_PX;
+      if (!older && !newer) return;
+      const anchor = this.nodes.get(older ? this.firstKey : this.lastKey)?.row;
+      const before = anchor?.getBoundingClientRect?.().top;
       const height = box.scrollHeight;
-      this.older = true;
-      this.update(this.last.lines, this.last.showTranslation);
-      box.scrollTop += box.scrollHeight - height;
+      this.shifting = true;
+      try {
+        this.older = older;
+        this.newer = newer;
+        this.update(this.last.lines, this.last.showTranslation);
+        if (before != null && anchor?.getBoundingClientRect) {
+          box.scrollTop += anchor.getBoundingClientRect().top - before;
+        } else if (older) {
+          // DOM-free test harnesses do not expose per-row geometry.
+          box.scrollTop += box.scrollHeight - height;
+        }
+      } finally {
+        this.shifting = false;
+      }
     }
 
-    // The first line in the page: the newest WINDOW_ROWS while following, else where the reader left it.
-    windowStart(lines, follow) {
-      if (!this.windowed) return 0;
-      const latest = Math.max(0, lines.length - WINDOW_ROWS);
-      let start = latest;
-      if (!follow && this.firstKey !== null) {
-        const at = lines[this.start]?.key === this.firstKey ? this.start : lines.findIndex((line) => line.key === this.firstKey);
-        if (at >= 0) start = Math.min(at, latest);
-      }
+    windowRange(lines, follow, previousLength) {
+      if (!this.windowed) return [0, lines.length];
+      if (follow || this.firstKey === null) return [Math.max(0, lines.length - WINDOW_ROWS), lines.length];
+      const at = lines[this.start]?.key === this.firstKey ? this.start : lines.findIndex((line) => line.key === this.firstKey);
+      let start = at >= 0 ? at : Math.max(0, this.start);
+      let end = this.end === previousLength ? lines.length : Math.min(lines.length, this.end);
       if (this.older) start = Math.max(0, start - OLDER_ROWS);
-      this.older = false;
-      return start;
+      if (this.newer) end = Math.min(lines.length, end + OLDER_ROWS);
+      if (end - start > MAX_WINDOW_ROWS) {
+        // When paging backward, evict the newest rows; when paging forward, evict the oldest.
+        if (this.older) end = start + MAX_WINDOW_ROWS;
+        else start = end - MAX_WINDOW_ROWS;
+      }
+      return [start, end];
+    }
+
+    jumpToLatest() {
+      if (!this.last) return;
+      this.forceFollow = true;
+      this.update(this.last.lines, this.last.showTranslation);
     }
 
     // A view that scrolls follows the newest line unless the reader has scrolled up to read back.
@@ -139,7 +169,9 @@
 
     update(lines, showTranslation) {
       const doc = this.doc;
-      const follow = this.following();
+      const previousLength = this.last?.lines.length ?? lines.length;
+      const follow = this.forceFollow || (!this.windowed || !this.last || this.end === previousLength) && this.following();
+      this.forceFollow = false;
       this.last = { lines, showTranslation };
       if (!lines.length) {
         this.clear();
@@ -156,12 +188,15 @@
         this.placeholder = null;
       }
       const before = this.positions(lines);
-      const start = this.windowStart(lines, follow);
+      const [start, end] = this.windowRange(lines, follow, previousLength);
       this.start = start;
+      this.end = end;
       this.firstKey = lines[start].key;
+      this.lastKey = lines[end - 1].key;
+      if (this.windowed) this.container.dataset.historyBehind = String(end < lines.length);
       const wanted = new Set();
       const order = [];
-      lines.slice(start).forEach((line, offset) => {
+      lines.slice(start, end).forEach((line, offset) => {
         const index = start + offset;
         const key = line.key;
         let node = this.nodes.get(key);
@@ -199,6 +234,10 @@
       for (const node of this.nodes.values()) node.row.remove?.();
       this.nodes.clear();
       this.firstKey = null;
+      this.lastKey = null;
+      this.start = 0;
+      this.end = 0;
+      if (this.windowed) this.container.dataset.historyBehind = "false";
       this.container.replaceChildren(...(this.placeholder ? [this.placeholder] : []));
     }
 
@@ -322,5 +361,9 @@
     view.update(lines, showTranslation);
   }
 
-  globalThis.YataCaptions = { CaptionBoard, CaptionView, LANGUAGES, languageLabel, render, speakerTone, WINDOW_ROWS, OLDER_ROWS };
+  function jumpToLatest(container) {
+    views.get(container)?.jumpToLatest();
+  }
+
+  globalThis.YataCaptions = { CaptionBoard, CaptionView, LANGUAGES, languageLabel, render, jumpToLatest, speakerTone, WINDOW_ROWS, OLDER_ROWS, MAX_WINDOW_ROWS };
 })();
