@@ -513,7 +513,7 @@ body.resizing-rows { cursor: row-resize; user-select: none; }
 .speaker-chip { font: 900 11px/1 var(--mono); letter-spacing: 0.1em; padding: 5px 8px; border-radius: 6px; color: #fff; background: var(--tone, var(--accent)); box-shadow: 0 4px 12px color-mix(in srgb, var(--tone, var(--accent)) 35%, transparent); animation: pop 0.35s; }
 .caption-lines { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
 /* The stage scrolls through the whole history; the first row's auto margin keeps short histories at the bottom. */
-.stage .caption-lines { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; padding-bottom: 4px; -webkit-mask-image: linear-gradient(to bottom, transparent, #000 28px); mask-image: linear-gradient(to bottom, transparent, #000 28px); }
+.stage .caption-lines { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; overflow-anchor: none; scrollbar-width: thin; padding-bottom: 4px; -webkit-mask-image: linear-gradient(to bottom, transparent, #000 28px); mask-image: linear-gradient(to bottom, transparent, #000 28px); }
 .stage .caption-lines > :first-child { margin-top: auto; }
 .caption-jump { position: absolute; right: 14px; bottom: 14px; z-index: 1; display: flex; align-items: center; gap: 4px; height: 28px; padding: 0 10px 0 6px;
   border: 1px solid var(--line-hi); border-radius: 14px; background: var(--surface); box-shadow: var(--shadow-lift); color: var(--accent); font-size: 11.5px; font-weight: 700; }
