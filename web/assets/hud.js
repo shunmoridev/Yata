@@ -117,13 +117,29 @@
     track.append(head);
     const ruler = doc.createElement("div");
     ruler.className = "map-ruler";
-    for (let i = 0; i <= 4; i++) {
+    rulerMarks(topics, total / 1.02, total).forEach((ms, index, marks) => {
       const mark = doc.createElement("span");
-      mark.textContent = clock((total / 1.02) * i / 4);
+      mark.textContent = clock(ms);
+      // Marks near either edge align to it instead of centring, so they stay inside the track.
+      if (index === 0 && ms / total < 0.04) mark.className = "first";
+      else if (index === marks.length - 1 && ms / total > 0.92) mark.className = "last";
+      if (mark.style) mark.style.left = pct(ms);
       ruler.append(mark);
-    }
+    });
     container.append(track, ruler);
   }
 
-  globalThis.YataHud = { gauge, radar, sessionMap, clock };
+  // The ruler reads at each topic's start; a start too close to the one before is left out so labels never overlap.
+  // The end is shown when it has room. Without topics the ruler spans the start and the end.
+  function rulerMarks(topics, endMs, totalMs, minGap = 0.08) {
+    const starts = topics.map((topic) => Math.max(0, topic.start_ms || 0)).sort((a, b) => a - b);
+    const marks = [];
+    for (const ms of starts.length ? starts : [0]) {
+      if (!marks.length || (ms - marks[marks.length - 1]) / totalMs >= minGap) marks.push(ms);
+    }
+    if ((endMs - marks[marks.length - 1]) / totalMs >= minGap) marks.push(endMs);
+    return marks;
+  }
+
+  globalThis.YataHud = { gauge, radar, sessionMap, rulerMarks, clock };
 })();

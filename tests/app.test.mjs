@@ -1184,6 +1184,127 @@ test("the divider widens the side column, remembers the width, and returns to th
   assert.equal(h.stored.has("yata.sideWidth"), false);
 });
 
+test("the sidebar and the captions have their own dividers that remember their size", async () => {
+  const h = harness({ storage: { "yata.sidebarWidth": "360", "yata.captionHeight": "300" } });
+  await flush();
+  assert.equal(h.body.style["--sidebar-width"], "360px");
+  assert.equal(h.$("caption-stage").style["--caption-height"], "300px");
+  // Without a layout here the sidebar measures 284 px and the stage 220 px.
+  h.$("sidebar-resizer").handlers.get("keydown")({ key: "ArrowRight", shiftKey: false, preventDefault() {} });
+  assert.equal(h.stored.get("yata.sidebarWidth"), "308");
+  h.$("sidebar-resizer").handlers.get("keydown")({ key: "ArrowLeft", shiftKey: true, preventDefault() {} });
+  assert.equal(h.body.style["--sidebar-width"], "220px", "never narrower than 220 px");
+  h.$("sidebar-resizer").handlers.get("dblclick")();
+  assert.equal(h.body.style["--sidebar-width"], undefined);
+  assert.equal(h.stored.has("yata.sidebarWidth"), false);
+  h.$("caption-resizer").handlers.get("keydown")({ key: "ArrowDown", shiftKey: false, preventDefault() {} });
+  assert.equal(h.stored.get("yata.captionHeight"), "244");
+  h.$("caption-resizer").handlers.get("keydown")({ key: "Escape", preventDefault() {} });
+  assert.equal(h.$("caption-stage").style["--caption-height"], undefined);
+});
+
+test("the timeline ruler reads at each topic's start, leaving out starts too close to the one before", () => {
+  const h = harness();
+  const { rulerMarks, sessionMap } = h.sandbox.YataHud;
+  const topics = [0, 72_000, 126_000, 135_000, 297_000, 468_000].map((start, i) => ({ id: "t" + i, index: i + 1, status: "closed",
+    start_ms: start, end_ms: start + 60_000 }));
+  assert.deepEqual([...rulerMarks(topics, 540_000, 540_000 * 1.02)], [0, 72_000, 126_000, 297_000, 468_000, 540_000]);
+  assert.deepEqual([...rulerMarks([], 540_000, 540_000 * 1.02)], [0, 540_000], "without topics: the start and the end");
+  assert.deepEqual([...rulerMarks(topics.slice(0, 2), 76_000, 76_000 * 1.02)], [0, 72_000], "the end gives way to a topic start");
+  const container = new Element(h.doc);
+  sessionMap(container, topics, [], 540_000);
+  const ruler = container.children.find((node) => node.classes.has("map-ruler"));
+  assert.deepEqual(ruler.children.map((mark) => mark.textContent), ["00:00", "01:12", "02:06", "04:57", "07:48", "09:00"]);
+  assert.ok(ruler.children[0].classes.has("first"));
+  assert.ok(ruler.children.at(-1).classes.has("last"));
+});
+
+test("the caption stage keeps the whole history; only the newest line keeps its per-character animation", () => {
+  const doc = makeDocument();
+  const sandbox = { globalThis: {} };
+  sandbox.globalThis = sandbox;
+  runInNewContext(read("../web/assets/captions.js"), sandbox);
+  const { CaptionBoard, render } = sandbox.YataCaptions;
+  const container = new Element(doc);
+  const board = new CaptionBoard();
+  for (let i = 0; i < 30; i++) board.addFinal({ segment_id: "e" + i, text: "line " + i, capture_start_ms: i * 1000 });
+  board.addFinal({ segment_id: "late", text: "late line", capture_start_ms: 500 });
+  board.addFinal({ segment_id: "e3", text: "line 3 again", capture_start_ms: 3000 });
+  const lines = board.lines();
+  assert.equal(lines.length, 31, "nothing is dropped and a repeated segment is not added twice");
+  assert.equal(lines[1].key, "late", "a line that arrives late is put in its place");
+  render(container, lines, false);
+  assert.equal(container.children.length, 31);
+  const animatedRows = container.children.filter((row) => row.find((node) => node.classes.has("ch")));
+  assert.deepEqual(animatedRows, [container.children.at(-1)]);
+  board.addFinal({ segment_id: "e30", text: "line 30", capture_start_ms: 30_000 });
+  render(container, board.lines(), false);
+  assert.equal(container.children.length, 32);
+  assert.equal(container.children.at(-2).find((node) => node.classes.has("ch")), null, "the row before the newest settles into plain text");
+  assert.equal(container.children.at(-2).textContent, "line 29");
+  const limited = new CaptionBoard(2);
+  ["a", "b", "c"].forEach((key, i) => limited.addFinal({ segment_id: key, text: key, capture_start_ms: i }));
+  assert.deepEqual([...limited.lines().map((line) => line.key)], ["b", "c"]);
+});
+
+test("projects group the sidebar: a folder per project, sessions moved by menu, and projects made, renamed and deleted", async () => {
+  const at = "2026-11-03T01:00:00Z";
+  const row = (id, title, project) => ({ id, source_kind: "share", status: "ended", display_title: title, started_at_utc: at, updated_at_utc: at,
+    duration_ms: 1000, project_id: project });
+  const projects = [{ id: "p1", name: "講義", created_at_utc: at }];
+  const sessions = [row("s1", "第1回", "p1"), row("s2", "定例", null), row("s3", "第2回", "gone")];
+  const h = harness({ replies: {
+    "GET /api/v1/sessions": () => ({ sessions, projects }),
+    "POST /api/v1/projects": () => { projects.push({ id: "p2", name: "新しいプロジェクト", created_at_utc: at }); return { project: projects.at(-1) }; },
+    "PATCH /api/v1/projects/p2": (init) => { projects[1].name = JSON.parse(init.body).name; return { project: projects[1] }; },
+    "DELETE /api/v1/projects/p1": () => { projects.shift(); return { deleted: "p1" }; },
+    "PUT /api/v1/sessions/s2/project": (init) => { sessions[1].project_id = JSON.parse(init.body).project_id; return { project_id: sessions[1].project_id }; },
+  } });
+  await flush();
+  const list = h.$("session-list");
+  const folders = () => list.findAll((node) => node.classes.has("project"));
+  const titlesIn = (node) => node.findAll((item) => item.classes.has("session-title")).map((item) => item.textContent);
+  assert.equal(folders().length, 1);
+  assert.deepEqual(titlesIn(folders()[0]), ["第1回"]);
+  assert.ok(list.find((node) => node.classes.has("unassigned")), "sessions outside a project list under a heading");
+  assert.deepEqual(list.children.filter((node) => node.classes.has("session-row")).map((node) => node.dataset.sessionId), ["s2", "s3"],
+    "a session whose project is gone lists as unassigned");
+
+  const rowOf = (id) => list.find((node) => node.dataset?.sessionId === id);
+  rowOf("s2").find((node) => node.classes.has("session-move")).handlers.get("click")();
+  const menu = list.find((node) => node.classes.has("move-menu"));
+  assert.deepEqual(menu.children.map((item) => item.textContent), ["講義", "未分類"]);
+  assert.equal(menu.children[1].getAttribute("aria-checked"), "true");
+  await menu.children[0].handlers.get("click")();
+  await flush();
+  assert.deepEqual(JSON.parse(h.sent("PUT", "/api/v1/sessions/s2/project")[0].init.body), { project_id: "p1" });
+  assert.deepEqual(titlesIn(folders()[0]), ["第1回", "定例"]);
+  assert.equal(list.find((node) => node.classes.has("move-menu")), null);
+
+  folders()[0].find((node) => node.classes.has("project-toggle")).handlers.get("click")();
+  assert.equal(folders()[0].find((node) => node.classes.has("project-sessions")), null, "a folder folds");
+  assert.equal(h.stored.get("yata.collapsedProjects"), JSON.stringify(["p1"]));
+
+  await h.click("new-project");
+  const input = list.find((node) => node.classes.has("project-name-input"));
+  assert.equal(input.value, "新しいプロジェクト");
+  input.value = "  週次 ";
+  input.handlers.get("keydown")({ key: "Enter", preventDefault() {} });
+  await flush();
+  assert.deepEqual(JSON.parse(h.sent("PATCH", "/api/v1/projects/p2")[0].init.body), { name: "週次" });
+  assert.deepEqual(folders().map((node) => node.find((item) => item.classes.has("project-name")).textContent), ["講義", "週次"]);
+
+  const remove = () => folders()[0].find((node) => node.classes.has("project-delete"));
+  remove().handlers.get("click")();
+  assert.equal(h.sent("DELETE", "/api/v1/projects/p1").length, 0, "the first click only arms the button");
+  assert.equal(remove().dataset.armed, "true");
+  remove().handlers.get("click")();
+  await flush();
+  await flush();
+  assert.equal(h.sent("DELETE", "/api/v1/projects/p1").length, 1);
+  assert.deepEqual(folders().map((node) => node.dataset.projectId), ["p2"]);
+});
+
 function i18nIn(languages, locale) {
   const doc = makeDocument();
   doc.documentElement = new Element(doc, "html");

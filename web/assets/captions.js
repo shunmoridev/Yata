@@ -12,9 +12,11 @@
   };
 
   class CaptionBoard {
-    constructor(maxFinals = 2) {
+    // The board keeps every final line of the session; a view that shows fewer (the small window) slices lines().
+    constructor(maxFinals = Infinity) {
       this.maxFinals = maxFinals;
       this.finals = [];
+      this.keys = new Set();
       this.partial = null;
       this.translations = new Map();
     }
@@ -22,13 +24,19 @@
     addFinal(caption) {
       if (!caption || !caption.text) return;
       const key = caption.segment_id || caption.utterance_id || caption.id;
-      if (this.finals.some((item) => item.key === key)) return;
-      this.finals.push({
+      if (this.keys.has(key)) return;
+      const item = {
         key, utterance: caption.utterance_id || null, text: caption.text, language: caption.language || null,
         speaker: caption.speaker || null, start: caption.capture_start_ms ?? null,
-      });
-      this.finals.sort((a, b) => (a.start ?? 0) - (b.start ?? 0));
-      this.finals = this.finals.slice(-this.maxFinals);
+      };
+      this.finals.push(item);
+      this.keys.add(key);
+      // Lines nearly always arrive in order; sort only when one did not.
+      const previous = this.finals[this.finals.length - 2];
+      if (previous && (previous.start ?? 0) > (item.start ?? 0)) this.finals.sort((a, b) => (a.start ?? 0) - (b.start ?? 0));
+      if (this.finals.length > this.maxFinals) {
+        this.finals.splice(0, this.finals.length - this.maxFinals).forEach((dropped) => this.keys.delete(dropped.key));
+      }
       if (this.partial && this.partial.utterance_id === caption.utterance_id) this.partial = null;
     }
 
@@ -62,6 +70,9 @@
   }
 
   const MAX_ANIMATED_CHARS = 48;
+  // Only the newest rows are on screen while the view follows, so only they are measured for the slide.
+  const SLIDE_ROWS = 8;
+  const FOLLOW_SLACK_PX = 32;
 
   class CaptionView {
     constructor(container) {
@@ -71,8 +82,21 @@
       this.placeholder = null;
     }
 
+    // A view that scrolls follows the newest line unless the reader has scrolled up to read back.
+    following() {
+      const box = this.container;
+      if (!box.scrollHeight || !box.clientHeight) return true;
+      return box.scrollHeight - box.scrollTop - box.clientHeight <= FOLLOW_SLACK_PX;
+    }
+
+    follow() {
+      const box = this.container;
+      if (box.scrollHeight) box.scrollTop = box.scrollHeight;
+    }
+
     update(lines, showTranslation) {
       const doc = this.doc;
+      const follow = this.following();
       if (!lines.length) {
         this.clear();
         if (!this.placeholder) {
@@ -87,7 +111,7 @@
         this.placeholder.remove?.();
         this.placeholder = null;
       }
-      const before = this.positions();
+      const before = this.positions(lines);
       const wanted = new Set();
       const order = [];
       lines.forEach((line, index) => {
@@ -114,8 +138,10 @@
         this.leave(node.row);
       }
       // Moving a node restarts its animations, so reorder only when the order really changed.
-      const current = [...this.container.children].filter((row) => !row.classList?.contains("leaving") && order.includes(row));
+      const ordered = new Set(order);
+      const current = [...this.container.children].filter((row) => !row.classList?.contains("leaving") && ordered.has(row));
       if (current.some((row, index) => row !== order[index])) order.forEach((row) => this.container.append(row));
+      if (follow) this.follow();
       this.slide(before);
     }
 
@@ -136,18 +162,26 @@
       const translation = doc.createElement("span");
       translation.className = "caption-translation";
       row.append(speaker, text, translation);
-      return { row, speaker, text, translation, value: "", kind: null, translated: "" };
+      return { row, speaker, text, translation, value: "", kind: null, translated: "", latest: null, speakerName: null, animated: false };
     }
 
     fill(node, line, showTranslation, latest) {
+      const translated = showTranslation && line.translation ? line.translation : "";
+      // With the whole history on the board most rows are unchanged on each update; leave them alone.
+      if (node.kind === line.kind && node.latest === latest && node.value === line.text && node.speakerName === (line.speaker || "")
+        && node.translated === translated) return;
       const tone = speakerTone(line.speaker);
       node.row.className = "caption-line " + line.kind + (latest ? " latest" : " past") + (tone ? " tone-" + tone : "")
         + (node.kind === "partial" && line.kind === "final" ? " locking" : "") + (node.value ? "" : " entering");
-      node.speaker.textContent = line.speaker || "";
-      node.speaker.hidden = !line.speaker;
-      if (line.text !== node.value) this.type(node, line.text);
+      if (node.speakerName !== (line.speaker || "")) {
+        node.speaker.textContent = line.speaker || "";
+        node.speaker.hidden = !line.speaker;
+        node.speakerName = line.speaker || "";
+      }
+      if (line.text !== node.value) this.type(node, line.text, latest);
+      else if (!latest && node.animated) this.settle(node);
       node.kind = line.kind;
-      const translated = showTranslation && line.translation ? line.translation : "";
+      node.latest = latest;
       if (translated !== node.translated) {
         node.translation.textContent = translated;
         node.translation.className = "caption-translation" + (translated ? " shown" : "");
@@ -155,9 +189,16 @@
       }
     }
 
-    type(node, next) {
+    type(node, next, animate = true) {
       const doc = this.doc;
       const previous = node.value;
+      if (!animate) {
+        node.text.replaceChildren();
+        node.text.textContent = next;
+        node.value = next;
+        node.animated = false;
+        return;
+      }
       let common = 0;
       while (common < previous.length && common < next.length && previous[common] === next[common]) common++;
       node.text.replaceChildren();
@@ -179,21 +220,29 @@
         node.text.append(rest);
       }
       node.value = next;
+      node.animated = true;
     }
 
-    positions() {
+    // A row that is no longer the newest drops its per-character spans: the history stays one text node a row.
+    settle(node) {
+      node.text.replaceChildren();
+      node.text.textContent = node.value;
+      node.animated = false;
+    }
+
+    positions(lines) {
       const out = new Map();
-      for (const node of this.nodes.values()) {
-        if (node.row.getBoundingClientRect) out.set(node.row, node.row.getBoundingClientRect().top);
+      for (const line of lines.slice(-SLIDE_ROWS)) {
+        const node = this.nodes.get(line.key) || (line.utterance && this.nodes.get("partial:" + line.utterance));
+        if (node?.row.getBoundingClientRect) out.set(node.row, node.row.getBoundingClientRect().top);
       }
       return out;
     }
 
     // FLIP: rows that moved animate from their old position to the new one.
     slide(before) {
-      for (const node of this.nodes.values()) {
-        const row = node.row;
-        if (!before.has(row) || !row.getBoundingClientRect || !row.animate) continue;
+      for (const row of before.keys()) {
+        if (!row.getBoundingClientRect || !row.animate) continue;
         const delta = before.get(row) - row.getBoundingClientRect().top;
         if (Math.abs(delta) > 1) row.animate([{ transform: `translateY(${delta}px)` }, { transform: "translateY(0)" }], { duration: 380, easing: "cubic-bezier(.2,.8,.2,1)" });
       }

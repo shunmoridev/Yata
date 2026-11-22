@@ -56,6 +56,9 @@
     <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M5.6 18.4l1.8-1.8M16.6 7.4l1.8-1.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
     <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 7.5V12l3 2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7.5a2 2 0 012-2h4l2 2h7a2 2 0 012 2v8a2 2 0 01-2 2h-13a2 2 0 01-2-2z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></symbol>
+    <symbol id="i-folder-plus" viewBox="0 0 24 24"><path d="M3.5 7.5a2 2 0 012-2h4l2 2h7a2 2 0 012 2v8a2 2 0 01-2 2h-13a2 2 0 01-2-2zM12 10.5v6M9 13.5h6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M4 20l1-4.5L15.5 5a2.1 2.1 0 013 3L8 18.5zM13.5 7l3 3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6zM14 3v4h4M9 12h6M9 16h6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7.5 10.5L12 15l4.5-4.5M5 19h14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   </svg>
@@ -74,7 +77,8 @@
       </div>
       <button class="new-session" id="new-session"><svg><use href="#i-plus"/></svg><span data-i18n="nav.newSession">新しいセッション</span></button>
       <div class="side-section">
-        <div class="side-label"><span data-i18n="nav.sessions">セッション</span><b class="count" id="session-total">0</b></div>
+        <div class="side-label"><span data-i18n="nav.sessions">セッション</span><b class="count" id="session-total">0</b>
+          <button class="icon-button side-add" id="new-project" aria-label="プロジェクトを作る" data-tip="プロジェクトを作る" data-i18n-attr="aria-label:projects.new;data-tip:projects.new"><svg><use href="#i-folder-plus"/></svg></button></div>
         <label class="search side-search"><svg><use href="#i-search"/></svg><input id="session-search" type="search" placeholder="名前で絞り込み" aria-label="セッションを名前で絞り込み"
           data-i18n-attr="placeholder:nav.filterPlaceholder;aria-label:nav.filterLabel"></label>
       </div>
@@ -95,6 +99,9 @@
           <button id="theme-hud" data-theme-choice="hud" aria-pressed="false">HUD</button>
         </div>
       </footer>
+      <div class="sidebar-resizer" id="sidebar-resizer" role="separator" aria-orientation="vertical" aria-controls="sidebar"
+        aria-label="一覧の幅" tabindex="0" data-tip="ドラッグで一覧の幅を変える（ダブルクリックで元に戻す）"
+        data-i18n-attr="aria-label:layout.sidebarResizer;data-tip:layout.sidebarResizerTip"></div>
     </aside>
     <div class="scrim" id="sidebar-scrim" aria-hidden="true"></div>
 
@@ -246,6 +253,10 @@
                 <button class="icon-button" id="open-pip" aria-label="字幕を小窓で表示" data-tip="字幕を小窓で表示" data-i18n-attr="aria-label:captions.pip;data-tip:captions.pip"><svg><use href="#i-pip"/></svg></button>
               </div>
               <div class="caption-lines" id="caption-lines"></div>
+              <button class="caption-jump" id="caption-jump" hidden><svg><use href="#i-chevron"/></svg><span data-i18n="captions.latest">最新の字幕へ</span></button>
+              <div class="caption-resizer" id="caption-resizer" role="separator" aria-orientation="horizontal" aria-controls="caption-stage"
+                aria-label="字幕の高さ" tabindex="0" data-tip="ドラッグで字幕の高さを変える（ダブルクリックで元に戻す）"
+                data-i18n-attr="aria-label:layout.captionResizer;data-tip:layout.captionResizerTip"></div>
             </section>
 
             <section class="panel feed" aria-labelledby="feed-title">
