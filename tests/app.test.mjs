@@ -1303,6 +1303,45 @@ test("the stage keeps only the newest rows in the page while it follows, and bri
   assert.ok(oldest.classes.has("leaving"));
 });
 
+test("scrollback pages in both directions without ever retaining the entire session in the DOM", () => {
+  const doc = makeDocument();
+  const sandbox = { globalThis: {} };
+  sandbox.globalThis = sandbox;
+  runInNewContext(read("../web/assets/captions.js"), sandbox);
+  const { CaptionBoard, render, jumpToLatest, WINDOW_ROWS, MAX_WINDOW_ROWS } = sandbox.YataCaptions;
+  const stage = new Element(doc);
+  const board = new CaptionBoard();
+  for (let i = 0; i < 10_000; i++) board.addFinal({ segment_id: "e" + i, text: "line " + i, capture_start_ms: i * 1000 });
+  Object.assign(stage, { scrollHeight: 6000, clientHeight: 200, scrollTop: 5800 });
+  render(stage, board.lines(), false, { windowed: true });
+  assert.equal(stage.children.length, WINDOW_ROWS);
+  // Repeatedly move into older and older parts of the session.
+  for (let i = 0; i < 60; i++) {
+    stage.scrollTop = 0;
+    stage.handlers.get("scroll")();
+    assert.ok(stage.children.length <= MAX_WINDOW_ROWS, "the window stays bounded when scrolling back");
+  }
+  assert.equal(stage.children[0].textContent, "line 0", "the beginning remains reachable");
+  assert.equal(stage.dataset.historyBehind, "true");
+  // Captions arriving while reading an older section must not jump to the live tail.
+  board.addFinal({ segment_id: "e10000", text: "line 10000", capture_start_ms: 10_000_000 });
+  board.setPartial({ utterance_id: "live", text: "live partial" });
+  render(stage, board.lines(), false, { windowed: true });
+  assert.equal(stage.children[0].textContent, "line 0");
+  assert.ok(stage.children.length <= MAX_WINDOW_ROWS);
+  assert.equal(stage.dataset.historyBehind, "true");
+  // Move forward through the same bounded window until the newest lines are reachable.
+  for (let i = 0; i < 60 && stage.dataset.historyBehind === "true"; i++) {
+    stage.scrollTop = stage.scrollHeight - stage.clientHeight;
+    stage.handlers.get("scroll")();
+    assert.ok(stage.children.length <= MAX_WINDOW_ROWS, "the window stays bounded when scrolling forward");
+  }
+  assert.equal(stage.dataset.historyBehind, "false", "the latest rows can be reached by scrolling down");
+  jumpToLatest(stage);
+  assert.equal(stage.children.length, WINDOW_ROWS);
+  assert.equal(stage.children.at(-1).textContent, "live partial");
+});
+
 test("projects group the sidebar: a folder per project, sessions moved by menu, and projects made, renamed and deleted", async () => {
   const at = "2026-11-03T01:00:00Z";
   const row = (id, title, project) => ({ id, source_kind: "share", status: "ended", display_title: title, started_at_utc: at, updated_at_utc: at,
