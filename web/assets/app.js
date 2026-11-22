@@ -354,13 +354,16 @@
   // Scrolled back through the history, the stage offers a way back to the newest line.
   function showCaptionJump() {
     const box = $("caption-lines");
-    const behind = Boolean(box.scrollHeight) && box.scrollHeight - box.scrollTop - box.clientHeight > 32;
+    const behind = box.dataset.historyBehind === "true"
+      || Boolean(box.scrollHeight) && box.scrollHeight - box.scrollTop - box.clientHeight > 32;
     $("caption-jump").hidden = !behind;
   }
 
   function jumpToLatestCaption() {
     const box = $("caption-lines");
+    YataCaptions.jumpToLatest(box);
     box.scrollTo?.({ top: box.scrollHeight, behavior: "smooth" });
+    showCaptionJump();
   }
 
   const CAPTION_HEIGHT = "yata.captionHeight";
