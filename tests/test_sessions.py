@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import shutil
 import tempfile
 import unittest
@@ -291,6 +292,63 @@ class ArchiveTests(unittest.TestCase):
         fresh = self.manager()
         self.assertIsNone(fresh.get(sessions[1].id).public_dict()["project_id"])
         self.assertIsNone(json.loads(path.read_text(encoding="utf-8"))["session"]["project_id"])
+
+    def test_project_deletion_cannot_race_with_assignment_after_existence_check(self):
+        manager = self.manager()
+        project = manager.create_project("講義")
+        session = self.create(manager)
+        manager.cancel(session)
+
+        checked = threading.Event()
+        release = threading.Event()
+        delete_started = threading.Event()
+        delete_done = threading.Event()
+        errors = []
+        original_exists = manager.projects.exists
+
+        def paused_exists(project_id):
+            found = original_exists(project_id)
+            checked.set()
+            if not release.wait(timeout=5):
+                raise AssertionError("timed out waiting to resume existence check")
+            return found
+
+        manager.projects.exists = paused_exists
+
+        def assign():
+            try:
+                manager.set_project(session, project["id"])
+            except Exception as error:
+                errors.append(error)
+
+        def delete():
+            delete_started.set()
+            try:
+                manager.delete_project(project["id"])
+            except Exception as error:
+                errors.append(error)
+            finally:
+                delete_done.set()
+
+        writer = threading.Thread(target=assign)
+        remover = threading.Thread(target=delete)
+        writer.start()
+        try:
+            self.assertTrue(checked.wait(2), "the assignment reaches the existence check")
+            remover.start()
+            self.assertTrue(delete_started.wait(2))
+            self.assertFalse(delete_done.wait(0.05), "deletion must wait while assignment is in progress")
+        finally:
+            release.set()
+        writer.join(5)
+        remover.join(5)
+        self.assertFalse(writer.is_alive())
+        self.assertFalse(remover.is_alive())
+        self.assertEqual(errors, [])
+        self.assertIsNone(session.project_id)
+        restarted = self.manager()
+        self.assertEqual(restarted.projects.list(), [])
+        self.assertIsNone(restarted.get(session.id).project_id)
 
     def test_the_default_data_folder_is_local_app_data_unless_configured(self):
         self.assertEqual(default_data_dir({"LOCALAPPDATA": r"C:\Users\u\AppData\Local"}), Path(r"C:\Users\u\AppData\Local") / "Yata")
